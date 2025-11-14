@@ -7,7 +7,7 @@ import { AspectRatio } from "../types";
 const getAiClient = () => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) {
-    throw new Error("API_KEY ortam değişkeni ayarlanmamış.");
+    throw new Error("API_KEY ortam değişkeni ayarlanmamış. Lütfen API anahtarınızı kontrol edin.");
   }
   return new GoogleGenAI({ apiKey });
 };
@@ -40,13 +40,13 @@ export const generateImage = async (
 
     // Verify we have a valid response structure
     if (!response.generatedImages || response.generatedImages.length === 0) {
-      throw new Error("Görüntü oluşturulamadı. İstem engellenmiş olabilir veya servis şu anda yoğun.");
+      throw new Error("API boş yanıt döndürdü. İstem filtrelenmiş olabilir.");
     }
 
     const generatedImage = response.generatedImages[0];
     
     if (!generatedImage.image || !generatedImage.image.imageBytes) {
-      throw new Error("API'den eksik görüntü verisi alındı.");
+      throw new Error("API yanıt verdi fakat görüntü verisi eksik.");
     }
 
     return {
@@ -55,12 +55,32 @@ export const generateImage = async (
     };
 
   } catch (error: any) {
-    console.error("Error generating image:", error);
-    // Improve error message for user
-    let message = "Görüntü oluşturulamadı.";
-    if (error.message) {
-      message += ` ${error.message}`;
+    console.error("GenAI Error Details:", error);
+    
+    // Extract error message string and potential details
+    const errorMessage = error.message || error.toString();
+    let friendlyMessage = "Görüntü oluşturulamadı.";
+
+    // Detailed error analysis based on common API error patterns
+    if (errorMessage.includes("SAFETY") || errorMessage.includes("blocked") || errorMessage.includes("Safety")) {
+      friendlyMessage = "⚠️ Güvenlik Uyarısı: İsteminiz (prompt) yapay zeka güvenlik filtrelerine takıldı. Lütfen şiddet, nefret söylemi veya cinsel içerik barındırmayan farklı bir açıklama deneyin.";
+    } else if (errorMessage.includes("429") || errorMessage.includes("RESOURCE_EXHAUSTED") || errorMessage.includes("quota")) {
+      friendlyMessage = "⏳ Kota Sınırı Aşıldı: Servis şu anda çok yoğun veya kullanım limitine ulaşıldı. Lütfen birkaç dakika bekleyip tekrar deneyin.";
+    } else if (errorMessage.includes("400") || errorMessage.includes("INVALID_ARGUMENT")) {
+      friendlyMessage = "❌ Geçersiz İstek: Girdiğiniz açıklama model tarafından işlenemiyor. Çok uzun veya karmaşık bir ifade kullanmış olabilirsiniz.";
+    } else if (errorMessage.includes("401") || errorMessage.includes("UNAUTHENTICATED")) {
+      friendlyMessage = "🔑 Yetkilendirme Hatası: API anahtarı geçersiz veya eksik. Lütfen sistem yöneticisi ile görüşün.";
+    } else if (errorMessage.includes("403") || errorMessage.includes("PERMISSION_DENIED")) {
+      friendlyMessage = "🚫 Erişim Reddedildi: Bu API'yi kullanma yetkiniz yok veya bölgenizde desteklenmiyor.";
+    } else if (errorMessage.includes("503") || errorMessage.includes("500") || errorMessage.includes("internal")) {
+      friendlyMessage = "☁️ Sunucu Hatası: Google servislerinde geçici bir sorun yaşanıyor. Lütfen daha sonra tekrar deneyin.";
+    } else if (errorMessage.includes("fetch failed") || errorMessage.includes("network")) {
+      friendlyMessage = "🌐 Bağlantı Hatası: İnternet bağlantınızı kontrol edin veya güvenlik duvarı ayarlarını gözden geçirin.";
+    } else {
+      // Include technical details for unknown errors but keep it readable
+      friendlyMessage = `Beklenmeyen bir hata oluştu: ${errorMessage.substring(0, 150)}${errorMessage.length > 150 ? '...' : ''}`;
     }
-    throw new Error(message);
+
+    throw new Error(friendlyMessage);
   }
 };
