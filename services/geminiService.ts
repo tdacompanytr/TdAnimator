@@ -1,9 +1,7 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Modality } from "@google/genai";
 import { AspectRatio } from "../types";
 
 // Initialize the client
-// We create a function to get the client to ensure fresh instances if needed,
-// though for this simple app a singleton is also fine.
 const getAiClient = () => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) {
@@ -19,66 +17,116 @@ export interface GenerateImageResult {
 
 export const generateImage = async (
   prompt: string,
-  aspectRatio: AspectRatio = '1:1'
+  aspectRatio: AspectRatio = '1:1',
+  outputMimeType: 'image/jpeg' | 'image/png' = 'image/jpeg',
+  referenceImageBase64?: string // Optional reference image for style transfer/editing
 ): Promise<GenerateImageResult> => {
   try {
     const ai = getAiClient();
     
-    // Using the Imagen 3 model as requested
-    const model = 'imagen-4.0-generate-001';
-    
-    const response = await ai.models.generateImages({
-      model: model,
-      prompt: prompt,
-      config: {
-        numberOfImages: 1,
-        outputMimeType: 'image/jpeg',
-        aspectRatio: aspectRatio,
-        // safetySettings could be added here if needed, generally defaults are good
-      },
-    });
+    // Decide which model and method to use based on whether a reference image is provided
+    if (referenceImageBase64) {
+      // CASE 1: Image + Text (Image-to-Image / Style Transfer)
+      // We must use 'gemini-2.5-flash-image' for multimodal inputs that generate images
+      
+      const model = 'gemini-2.5-flash-image';
+      
+      // Extract pure base64 if it contains the data URL prefix
+      const base64Data = referenceImageBase64.replace(/^data:image\/\w+;base64,/, "");
+      
+      const response = await ai.models.generateContent({
+        model: model,
+        contents: {
+          parts: [
+            {
+              text: prompt,
+            },
+            {
+              inlineData: {
+                data: base64Data,
+                mimeType: 'image/jpeg', // Assuming input is jpeg/png, standardized to generic image mime if needed, or pass actual
+              },
+            },
+          ],
+        },
+        config: {
+          responseModalities: [Modality.IMAGE],
+        },
+      });
 
-    // Verify we have a valid response structure
-    if (!response.generatedImages || response.generatedImages.length === 0) {
-      throw new Error("API boş yanıt döndürdü. İstem filtrelenmiş olabilir.");
+      // Extract the generated image from the content candidates
+      const candidates = response.candidates;
+      if (!candidates || candidates.length === 0) {
+        throw new Error("Referans görsel ile üretim başarısız oldu.");
+      }
+
+      const generatedPart = candidates[0].content.parts.find(p => p.inlineData);
+      
+      if (!generatedPart || !generatedPart.inlineData || !generatedPart.inlineData.data) {
+        throw new Error("API geçerli bir görsel verisi döndürmedi.");
+      }
+
+      return {
+        imageBytes: generatedPart.inlineData.data,
+        mimeType: 'image/png', // Flash Image output is typically PNG
+      };
+
+    } else {
+      // CASE 2: Text Only (Text-to-Image)
+      // Use Imagen 3 for high quality generation
+      const model = 'imagen-4.0-generate-001';
+      
+      const response = await ai.models.generateImages({
+        model: model,
+        prompt: prompt,
+        config: {
+          numberOfImages: 1,
+          outputMimeType: outputMimeType,
+          aspectRatio: aspectRatio,
+        },
+      });
+
+      if (!response.generatedImages || response.generatedImages.length === 0) {
+        throw new Error("API yanıt döndürdü ancak içinde görsel verisi bulunamadı. İsteminiz güvenlik filtrelerine takılmış olabilir.");
+      }
+
+      const generatedImage = response.generatedImages[0];
+      
+      if (!generatedImage.image || !generatedImage.image.imageBytes) {
+        throw new Error("API yanıtı eksik veri içeriyor.");
+      }
+
+      return {
+        imageBytes: generatedImage.image.imageBytes,
+        mimeType: outputMimeType,
+      };
     }
-
-    const generatedImage = response.generatedImages[0];
-    
-    if (!generatedImage.image || !generatedImage.image.imageBytes) {
-      throw new Error("API yanıt verdi fakat görüntü verisi eksik.");
-    }
-
-    return {
-      imageBytes: generatedImage.image.imageBytes,
-      mimeType: 'image/jpeg',
-    };
 
   } catch (error: any) {
-    console.error("GenAI Error Details:", error);
+    console.error("GenAI Hata Detayı:", error);
     
-    // Extract error message string and potential details
-    const errorMessage = error.message || error.toString();
-    let friendlyMessage = "Görüntü oluşturulamadı.";
+    const errorMessage = (error.message || error.toString()).toLowerCase();
+    let friendlyMessage = "Görüntü oluşturulurken beklenmeyen bir hata oluştu.";
 
-    // Detailed error analysis based on common API error patterns
-    if (errorMessage.includes("SAFETY") || errorMessage.includes("blocked") || errorMessage.includes("Safety")) {
-      friendlyMessage = "⚠️ Güvenlik Uyarısı: İsteminiz (prompt) yapay zeka güvenlik filtrelerine takıldı. Lütfen şiddet, nefret söylemi veya cinsel içerik barındırmayan farklı bir açıklama deneyin.";
-    } else if (errorMessage.includes("429") || errorMessage.includes("RESOURCE_EXHAUSTED") || errorMessage.includes("quota")) {
-      friendlyMessage = "⏳ Kota Sınırı Aşıldı: Servis şu anda çok yoğun veya kullanım limitine ulaşıldı. Lütfen birkaç dakika bekleyip tekrar deneyin.";
-    } else if (errorMessage.includes("400") || errorMessage.includes("INVALID_ARGUMENT")) {
-      friendlyMessage = "❌ Geçersiz İstek: Girdiğiniz açıklama model tarafından işlenemiyor. Çok uzun veya karmaşık bir ifade kullanmış olabilirsiniz.";
-    } else if (errorMessage.includes("401") || errorMessage.includes("UNAUTHENTICATED")) {
-      friendlyMessage = "🔑 Yetkilendirme Hatası: API anahtarı geçersiz veya eksik. Lütfen sistem yöneticisi ile görüşün.";
-    } else if (errorMessage.includes("403") || errorMessage.includes("PERMISSION_DENIED")) {
-      friendlyMessage = "🚫 Erişim Reddedildi: Bu API'yi kullanma yetkiniz yok veya bölgenizde desteklenmiyor.";
-    } else if (errorMessage.includes("503") || errorMessage.includes("500") || errorMessage.includes("internal")) {
-      friendlyMessage = "☁️ Sunucu Hatası: Google servislerinde geçici bir sorun yaşanıyor. Lütfen daha sonra tekrar deneyin.";
-    } else if (errorMessage.includes("fetch failed") || errorMessage.includes("network")) {
-      friendlyMessage = "🌐 Bağlantı Hatası: İnternet bağlantınızı kontrol edin veya güvenlik duvarı ayarlarını gözden geçirin.";
-    } else {
-      // Include technical details for unknown errors but keep it readable
-      friendlyMessage = `Beklenmeyen bir hata oluştu: ${errorMessage.substring(0, 150)}${errorMessage.length > 150 ? '...' : ''}`;
+    // Detaylı Hata Analizi
+    if (errorMessage.includes("safety") || errorMessage.includes("blocked") || errorMessage.includes("finish_reason")) {
+      friendlyMessage = "⚠️ Güvenlik Uyarısı: Girdiğiniz açıklama (prompt) veya referans görsel yapay zeka güvenlik filtrelerine takıldı.";
+    } 
+    else if (errorMessage.includes("429") || errorMessage.includes("resource_exhausted") || errorMessage.includes("quota")) {
+      friendlyMessage = "⏳ Kota Sınırı Aşıldı: Servis şu anda çok yoğun veya günlük kullanım limitiniz doldu. Lütfen birkaç dakika bekleyip tekrar deneyin.";
+    } 
+    else if (errorMessage.includes("400") || errorMessage.includes("invalid_argument")) {
+      friendlyMessage = "❌ Geçersiz İstek: Açıklamanız model tarafından işlenemedi. Lütfen referans görselin boyutunu veya formatını kontrol edin.";
+    } 
+    else if (errorMessage.includes("401") || errorMessage.includes("unauthenticated")) {
+      friendlyMessage = "🔑 Kimlik Doğrulama Hatası: API anahtarı geçersiz.";
+    } 
+    else if (errorMessage.includes("503") || errorMessage.includes("500")) {
+      friendlyMessage = "☁️ Sunucu Hatası: Google yapay zeka sunucularında geçici bir problem yaşanıyor.";
+    }
+    else {
+      const technicalDetail = errorMessage.length > 100 ? errorMessage.substring(0, 100) + "..." : errorMessage;
+      friendlyMessage = `Beklenmeyen bir hata: ${technicalDetail}.`;
     }
 
     throw new Error(friendlyMessage);

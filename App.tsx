@@ -1,10 +1,89 @@
-import React from 'react';
+
+import React, { useState, useEffect } from 'react';
 import ImageGenerator from './components/ImageGenerator';
-import { SparklesIcon } from './components/Icons';
+import { SparklesIcon, UserIcon, LogOutIcon, SettingsIcon } from './components/Icons';
+import { setCookie, getCookie, eraseCookie } from './utils/cookieUtils';
 
 const App: React.FC = () => {
+  const [username, setUsername] = useState<string | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [inputValue, setInputValue] = useState('');
+  
+  // Global Settings State passed to ImageGenerator
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  useEffect(() => {
+    const savedUser = getCookie('td_username');
+    if (savedUser) {
+      setUsername(savedUser);
+    } else {
+      setIsModalOpen(true);
+    }
+  }, []);
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (inputValue.trim()) {
+      const name = inputValue.trim();
+      setCookie('td_username', name, 30); // Save for 30 days
+      setUsername(name);
+      setIsModalOpen(false);
+    }
+  };
+
+  const handleLogout = () => {
+    eraseCookie('td_username');
+    setUsername(null);
+    setInputValue('');
+    setIsModalOpen(true);
+  };
+
   return (
     <div className="min-h-screen bg-darker text-white selection:bg-primary selection:text-white">
+      {/* Login Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm"></div>
+          <div className="relative w-full max-w-md bg-surface border border-white/10 rounded-2xl p-8 shadow-2xl transform transition-all animate-in fade-in zoom-in duration-300">
+            <div className="flex flex-col items-center gap-4 mb-6">
+              <div className="p-3 bg-primary/20 rounded-xl">
+                <SparklesIcon className="w-8 h-8 text-primary" />
+              </div>
+              <div className="text-center">
+                <h2 className="text-2xl font-bold text-white">Hoş Geldiniz</h2>
+                <p className="text-slate-400">TdAnimator'u kullanmak için isminizi girin.</p>
+              </div>
+            </div>
+            
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div>
+                <label htmlFor="username" className="block text-sm font-medium text-slate-300 mb-2">
+                  İsim / Kullanıcı Adı
+                </label>
+                <input
+                  type="text"
+                  id="username"
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  className="w-full bg-darker border border-white/10 rounded-xl p-4 text-white placeholder-slate-500 focus:ring-2 focus:ring-primary focus:border-transparent transition-all outline-none"
+                  placeholder="Adınız..."
+                  autoFocus
+                  required
+                  maxLength={20}
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={!inputValue.trim()}
+                className="w-full bg-primary hover:bg-primaryHover disabled:bg-slate-700 disabled:text-slate-500 text-white font-bold py-4 px-6 rounded-xl transition-all shadow-lg shadow-primary/10"
+              >
+                Başla
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       <header className="sticky top-0 z-50 bg-dark/80 backdrop-blur-md border-b border-white/10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
@@ -17,11 +96,45 @@ const App: React.FC = () => {
                 <p className="text-[10px] text-slate-400 leading-none">by Tda Company</p>
               </div>
             </div>
+
+            {/* Right Side Actions */}
+            <div className="flex items-center gap-4">
+               {/* Global Settings Trigger - "En Yukarıya" */}
+               <button 
+                  onClick={() => setIsSettingsOpen(true)}
+                  className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all relative group"
+                  title="Genel Ayarlar"
+                >
+                  <SettingsIcon className="w-6 h-6" />
+                  <span className="absolute top-full right-0 mt-2 w-max px-2 py-1 text-xs text-white bg-surface border border-white/10 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                    Görüntü Ayarları
+                  </span>
+                </button>
+
+              {/* User Profile Section */}
+              {username && (
+                <div className="flex items-center gap-4 border-l border-white/10 pl-4">
+                  <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-full border border-white/10">
+                    <div className="w-6 h-6 bg-primary rounded-full flex items-center justify-center text-xs font-bold text-white">
+                      <UserIcon className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="text-sm font-medium text-slate-200">{username}</span>
+                  </div>
+                  <button 
+                    onClick={handleLogout}
+                    className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                    title="Çıkış Yap"
+                  >
+                    <LogOutIcon className="w-5 h-5" />
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 transition-opacity duration-500 ${isModalOpen ? 'opacity-0' : 'opacity-100'}`}>
         <div className="flex flex-col gap-8">
           <div className="text-center max-w-2xl mx-auto space-y-4">
             <h2 className="text-4xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-white via-slate-200 to-slate-400">
@@ -32,7 +145,11 @@ const App: React.FC = () => {
             </p>
           </div>
           
-          <ImageGenerator />
+          {/* Pass settings props to ImageGenerator */}
+          <ImageGenerator 
+            isSettingsOpen={isSettingsOpen} 
+            onSettingsClose={() => setIsSettingsOpen(false)} 
+          />
         </div>
       </main>
 
