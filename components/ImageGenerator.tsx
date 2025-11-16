@@ -1,8 +1,8 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { generateImage } from '../services/geminiService';
-import { AspectRatio, ASPECT_RATIOS, GeneratedImage, WatermarkTextEffect, WATERMARK_EFFECTS, WatermarkPosition, WATERMARK_POSITIONS, WatermarkSize, WATERMARK_SIZES, Resolution, RESOLUTIONS, StylePreset, STYLE_PRESETS } from '../types';
-import { WandIcon, DownloadIcon, AlertCircleIcon, LoaderIcon, ImageIcon, HistoryIcon, TrashIcon, ShareIcon, StampIcon, EditIcon, SettingsIcon, XIcon, UploadCloudIcon, ArchiveIcon, CheckSquareIcon, SquareIcon, RefreshCwIcon } from './Icons';
+import { AspectRatio, ASPECT_RATIOS, GeneratedImage, WatermarkTextEffect, WATERMARK_EFFECTS, WatermarkPosition, WATERMARK_POSITIONS, WatermarkSize, WATERMARK_SIZES, Resolution, RESOLUTIONS, StylePreset, STYLE_PRESETS, LightingType, LIGHTING_TYPES, CameraAngle, CAMERA_ANGLES, ColorTone, COLOR_TONES } from '../types';
+import { WandIcon, DownloadIcon, AlertCircleIcon, LoaderIcon, ImageIcon, HistoryIcon, TrashIcon, ShareIcon, StampIcon, EditIcon, SettingsIcon, XIcon, UploadCloudIcon, ArchiveIcon, CheckSquareIcon, SquareIcon, RefreshCwIcon, LayersIcon } from './Icons';
 import JSZip from 'jszip';
 
 const MAX_HISTORY_ITEMS = 5; 
@@ -35,6 +35,11 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
   const [smartEnhance, setSmartEnhance] = useState(false);
   const [negativePrompt, setNegativePrompt] = useState('');
   const [stylePreset, setStylePreset] = useState<StylePreset>('none');
+  
+  // Advanced Settings
+  const [lighting, setLighting] = useState<LightingType>('none');
+  const [cameraAngle, setCameraAngle] = useState<CameraAngle>('none');
+  const [colorTone, setColorTone] = useState<ColorTone>('none');
 
   // Watermark states
   const [showWatermark, setShowWatermark] = useState(false);
@@ -130,7 +135,31 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
     setWatermarkOpacity(item.watermarkOpacity || 70);
     setWatermarkPosition(item.watermarkPosition || 'bottomRight');
     setWatermarkSize(item.watermarkSize || 'medium');
+    
+    // Restore advanced settings if they exist
+    if (item.lighting) setLighting(item.lighting as LightingType);
+    if (item.cameraAngle) setCameraAngle(item.cameraAngle as CameraAngle);
+    if (item.colorTone) setColorTone(item.colorTone as ColorTone);
+    
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleUseAsReference = (item: GeneratedImage) => {
+    // Construct data URL from stored base64
+    const dataUrl = `data:${item.mimeType};base64,${item.base64}`;
+    setReferenceImage(dataUrl);
+    setPrompt(item.prompt); // Pre-fill with the same prompt to allow editing
+    setAspectRatio(item.aspectRatio as AspectRatio); // Match aspect ratio
+    
+    // Reset filters for the new reference
+    setRefFilters({ hueRotate: 0, brightness: 100, contrast: 100 });
+    setShowRefFilters(false);
+
+    // Scroll to input
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setTimeout(() => {
+        textAreaRef.current?.focus();
+    }, 500);
   };
 
   const toggleSelection = (timestamp: number) => {
@@ -176,7 +205,6 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
         const item = history.find(h => h.timestamp === id);
         if (item) {
            const ext = item.mimeType === 'image/png' ? 'png' : 'jpg';
-           // item.base64 is the raw base64 string
            folder?.file(`tdanimator-${id}.${ext}`, item.base64, {base64: true});
            count++;
         }
@@ -269,6 +297,10 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
     const effectiveAspectRatio = (overrideConfig?.aspectRatio as AspectRatio) ?? aspectRatio;
     const effectiveResolution = (overrideConfig?.resolution as Resolution) ?? resolution;
     const effectiveStyle = (overrideConfig?.stylePreset as StylePreset) ?? stylePreset;
+    
+    const effectiveLighting = overrideConfig?.lighting ?? lighting;
+    const effectiveCamera = overrideConfig?.cameraAngle ?? cameraAngle;
+    const effectiveColor = overrideConfig?.colorTone ?? colorTone;
 
     if (!effectivePrompt.trim()) {
       setError("Lütfen oluşturmak istediğiniz görsel için bir açıklama girin.");
@@ -281,7 +313,9 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
        setAspectRatio(effectiveAspectRatio);
        setResolution(effectiveResolution);
        setStylePreset(effectiveStyle);
-       // Note: Regenerating usually means text-to-image unless user has manually re-uploaded the ref image
+       setLighting(effectiveLighting as LightingType);
+       setCameraAngle(effectiveCamera as CameraAngle);
+       setColorTone(effectiveColor as ColorTone);
     }
 
     setIsLoading(true);
@@ -290,9 +324,9 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
     try {
       let finalPrompt = effectivePrompt.trim();
       
+      // Add Style Modifiers
       const selectedStyle = STYLE_PRESETS.find(s => s.value === effectiveStyle);
       if (selectedStyle && selectedStyle.promptModifier) {
-        // Use current referenceImage state even when regenerating, or null if none
         if (referenceImage) {
             finalPrompt += `. Redraw this image in ${selectedStyle.label} style. ${selectedStyle.promptModifier}`;
         } else {
@@ -300,6 +334,22 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
         }
       } else if (referenceImage) {
          finalPrompt += ". Use the reference image as inspiration.";
+      }
+
+      // Add Advanced Settings Modifiers
+      const selectedLighting = LIGHTING_TYPES.find(l => l.value === effectiveLighting);
+      if (selectedLighting && selectedLighting.promptModifier) {
+        finalPrompt += selectedLighting.promptModifier;
+      }
+
+      const selectedCamera = CAMERA_ANGLES.find(c => c.value === effectiveCamera);
+      if (selectedCamera && selectedCamera.promptModifier) {
+        finalPrompt += selectedCamera.promptModifier;
+      }
+
+      const selectedColor = COLOR_TONES.find(c => c.value === effectiveColor);
+      if (selectedColor && selectedColor.promptModifier) {
+        finalPrompt += selectedColor.promptModifier;
       }
 
       if (!referenceImage) {
@@ -342,6 +392,9 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
         watermarkOpacity: watermarkOpacity,
         watermarkPosition: watermarkPosition,
         watermarkSize: watermarkSize,
+        lighting: effectiveLighting,
+        cameraAngle: effectiveCamera,
+        colorTone: effectiveColor
       };
 
       setGeneratedImage(newImage);
@@ -352,7 +405,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
     } finally {
       setIsLoading(false);
     }
-  }, [prompt, aspectRatio, resolution, stylePreset, negativePrompt, history, watermarkTextEffect, watermarkOpacity, watermarkPosition, watermarkSize, outputFormat, smartEnhance, referenceImage, refFilters, processReferenceImage]);
+  }, [prompt, aspectRatio, resolution, stylePreset, negativePrompt, history, watermarkTextEffect, watermarkOpacity, watermarkPosition, watermarkSize, outputFormat, smartEnhance, referenceImage, refFilters, processReferenceImage, lighting, cameraAngle, colorTone]);
 
   const handleRegenerate = useCallback((item: GeneratedImage) => {
     handleGenerate(item);
@@ -1113,7 +1166,15 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                         </div>
                         
                         <div className="absolute inset-0 flex items-end justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 p-6 bg-gradient-to-t from-black/80 via-transparent to-transparent rounded-lg">
-                            <div className="flex gap-3 transform translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
+                            <div className="flex flex-wrap justify-center gap-3 transform translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
+                              <button 
+                                  onClick={() => handleUseAsReference(generatedImage)}
+                                  className="flex items-center gap-2 bg-primary hover:bg-primaryHover border border-white/10 text-white font-bold py-3 px-6 rounded-full transition-colors shadow-lg"
+                                  title="Bu görseli referans alarak yeni varyasyonlar oluştur"
+                              >
+                                  <LayersIcon className="w-5 h-5" />
+                                  Referans Al
+                              </button>
                               <button 
                                   onClick={() => handleOpenEditor(generatedImage)}
                                   className="flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 text-white font-bold py-3 px-6 rounded-full hover:bg-white/20 transition-colors shadow-lg"
@@ -1250,9 +1311,9 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                             </div>
                         )}
 
-                        {/* Regenerate Button (Only when not in selection mode) */}
+                        {/* Action Buttons (Only when not in selection mode) */}
                         {!isSelectionMode && (
-                            <div className="absolute top-2 left-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <div className="absolute top-2 left-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity flex justify-between">
                                 <div
                                     onClick={(e) => {
                                         e.stopPropagation();
@@ -1262,6 +1323,16 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                                     title="Bu ayarlarla tekrar oluştur"
                                 >
                                     <RefreshCwIcon className="w-4 h-4" />
+                                </div>
+                                 <div
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleUseAsReference(item);
+                                    }}
+                                    className="p-1.5 bg-black/50 hover:bg-primary text-white rounded-lg backdrop-blur-sm transition-colors cursor-pointer"
+                                    title="Referans alarak yeni varyasyon üret"
+                                >
+                                    <LayersIcon className="w-4 h-4" />
                                 </div>
                             </div>
                         )}
@@ -1281,11 +1352,11 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
         )}
       </div>
 
-      {/* Settings Modal (Existing Code) */}
+      {/* Settings Modal */}
       {isSettingsOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onSettingsClose}></div>
-          <div className="relative w-full max-w-xl bg-surface border border-white/10 rounded-2xl p-6 shadow-2xl transform transition-all animate-in fade-in zoom-in duration-300 max-h-[90vh] overflow-y-auto custom-scrollbar">
+          <div className="relative w-full max-w-2xl bg-surface border border-white/10 rounded-2xl p-6 shadow-2xl transform transition-all animate-in fade-in zoom-in duration-300 max-h-[90vh] overflow-y-auto custom-scrollbar">
             <div className="flex items-center justify-between mb-6 sticky top-0 bg-surface py-2 z-10 border-b border-white/5">
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
                 <SettingsIcon className="w-6 h-6 text-primary" />
@@ -1313,6 +1384,59 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                                 {style.label}
                             </button>
                         ))}
+                    </div>
+                </div>
+
+                <hr className="border-white/5" />
+
+                {/* New Advanced Settings Sections */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {/* Lighting */}
+                    <div className="space-y-3">
+                         <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Aydınlatma</h3>
+                         <div className="grid grid-cols-1 gap-1.5">
+                            {LIGHTING_TYPES.map((l) => (
+                                <button
+                                    key={l.value}
+                                    onClick={() => setLighting(l.value)}
+                                    className={`p-2 text-xs rounded-lg border transition-all text-left ${lighting === l.value ? 'bg-primary/20 border-primary text-white' : 'bg-darker border-white/10 text-slate-400 hover:bg-white/5'}`}
+                                >
+                                    {l.label}
+                                </button>
+                            ))}
+                         </div>
+                    </div>
+
+                    {/* Camera Angle */}
+                    <div className="space-y-3">
+                         <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Kamera Açısı</h3>
+                         <div className="grid grid-cols-1 gap-1.5">
+                            {CAMERA_ANGLES.map((c) => (
+                                <button
+                                    key={c.value}
+                                    onClick={() => setCameraAngle(c.value)}
+                                    className={`p-2 text-xs rounded-lg border transition-all text-left ${cameraAngle === c.value ? 'bg-primary/20 border-primary text-white' : 'bg-darker border-white/10 text-slate-400 hover:bg-white/5'}`}
+                                >
+                                    {c.label}
+                                </button>
+                            ))}
+                         </div>
+                    </div>
+
+                    {/* Color Tone */}
+                    <div className="space-y-3">
+                         <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Renk Tonu</h3>
+                         <div className="grid grid-cols-1 gap-1.5">
+                            {COLOR_TONES.map((c) => (
+                                <button
+                                    key={c.value}
+                                    onClick={() => setColorTone(c.value)}
+                                    className={`p-2 text-xs rounded-lg border transition-all text-left ${colorTone === c.value ? 'bg-primary/20 border-primary text-white' : 'bg-darker border-white/10 text-slate-400 hover:bg-white/5'}`}
+                                >
+                                    {c.label}
+                                </button>
+                            ))}
+                         </div>
                     </div>
                 </div>
 

@@ -11,6 +11,10 @@ export interface GeneratedImage {
   watermarkOpacity: number;
   watermarkPosition: WatermarkPosition;
   watermarkSize: WatermarkSize;
+  // New metadata fields
+  lighting?: string;
+  cameraAngle?: string;
+  colorTone?: string;
 }
 
 export type AspectRatio = '1:1' | '3:4' | '4:3' | '16:9' | '9:16';
@@ -38,6 +42,11 @@ export type StylePreset =
 export type WatermarkTextEffect = 'none' | 'outline' | 'shadow' | 'glow' | 'emboss' | 'vintage' | 'neon';
 export type WatermarkPosition = 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight' | 'center' | 'tile';
 export type WatermarkSize = 'small' | 'medium' | 'large' | 'extraLarge';
+
+// New Types
+export type LightingType = 'none' | 'studio' | 'natural' | 'golden' | 'dramatic' | 'neon' | 'dark' | 'volumetric';
+export type CameraAngle = 'none' | 'wide' | 'close-up' | 'macro' | 'drone' | 'isometric' | 'low-angle' | 'eye-level';
+export type ColorTone = 'none' | 'vibrant' | 'bw' | 'sepia' | 'pastel' | 'muted' | 'cool' | 'warm';
 
 export const ASPECT_RATIOS: { value: AspectRatio; label: string; description: string }[] = [
   { value: '1:1', label: 'Kare (1:1)', description: 'Instagram ve profil resimleri için ideal' },
@@ -99,4 +108,37 @@ export const WATERMARK_SIZES: { value: WatermarkSize; label: string }[] = [
   { value: 'medium', label: 'Orta' },
   { value: 'large', label: 'Büyük' },
   { value: 'extraLarge', label: 'Çok Büyük' },
+];
+
+// New Configuration Arrays
+export const LIGHTING_TYPES: { value: LightingType; label: string; promptModifier: string }[] = [
+  { value: 'none', label: 'Varsayılan', promptModifier: '' },
+  { value: 'studio', label: 'Stüdyo Işığı', promptModifier: ', studio lighting, professional lighting, softbox' },
+  { value: 'natural', label: 'Doğal Işık', promptModifier: ', natural lighting, sunlight, daylight' },
+  { value: 'golden', label: 'Altın Saat', promptModifier: ', golden hour, warm lighting, sunset glow' },
+  { value: 'dramatic', label: 'Dramatik', promptModifier: ', dramatic lighting, high contrast, chiaroscuro' },
+  { value: 'neon', label: 'Neon', promptModifier: ', neon lighting, colorful lights, cyberpunk atmosphere' },
+  { value: 'dark', label: 'Karanlık/Loş', promptModifier: ', dark atmosphere, dim lighting, mysterious' },
+  { value: 'volumetric', label: 'Hacimsel', promptModifier: ', volumetric lighting, god rays, misty atmosphere' },
+];
+
+export const CAMERA_ANGLES: { value: CameraAngle; label: string; promptModifier: string }[] = [
+  { value: 'none', label: 'Varsayılan', promptModifier: '' },
+  { value: 'wide', label: 'Geniş Açı', promptModifier: ', wide angle shot, panoramic view' },
+  { value: 'close-up', label: 'Yakın Çekim', promptModifier: ', close-up shot, detailed face' },
+  { value: 'macro', label: 'Makro', promptModifier: ', macro photography, extreme close-up, microscopic details' },
+  { value: 'drone', label: 'Drone / Kuş Bakışı', promptModifier: ', aerial view, drone shot, bird\'s eye view' },
+  { value: 'low-angle', label: 'Alt Açı', promptModifier: ', low angle shot, looking up, imposing' },
+  { value: 'isometric', label: 'İzometrik', promptModifier: ', isometric view, 3d diagram style' },
+];
+
+export const COLOR_TONES: { value: ColorTone; label: string; promptModifier: string }[] = [
+  { value: 'none', label: 'Varsayılan', promptModifier: '' },
+  { value: 'vibrant', label: 'Canlı & Parlak', promptModifier: ', vibrant colors, saturated, colorful' },
+  { value: 'bw', label: 'Siyah & Beyaz', promptModifier: ', black and white, monochrome, grayscale' },
+  { value: 'sepia', label: 'Sepya / Eskitme', promptModifier: ', sepia tone, old photo style' },
+  { value: 'pastel', label: 'Pastel', promptModifier: ', pastel colors, soft tones, dreamy' },
+  { value: 'muted', label: 'Soluk / Mat', promptModifier: ', muted colors, desaturated, matte look' },
+  { value: 'cool', label: 'Soğuk Tonlar', promptModifier: ', cool color palette, blue tones, cold atmosphere' },
+  { value: 'warm', label: 'Sıcak Tonlar', promptModifier: ', warm color palette, orange and yellow tones, cozy' },
 ];
