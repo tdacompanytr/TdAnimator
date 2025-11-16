@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import ImageGenerator from './components/ImageGenerator';
-import { SparklesIcon, UserIcon, LogOutIcon, SettingsIcon } from './components/Icons';
+import { UserIcon, LogOutIcon, SettingsIcon, BrushIcon } from './components/Icons';
 import { setCookie, getCookie, eraseCookie } from './utils/cookieUtils';
 
 const App: React.FC = () => {
@@ -45,13 +45,14 @@ const App: React.FC = () => {
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm"></div>
           <div className="relative w-full max-w-md bg-surface border border-white/10 rounded-2xl p-8 shadow-2xl transform transition-all animate-in fade-in zoom-in duration-300">
-            <div className="flex flex-col items-center gap-4 mb-6">
-              <div className="p-3 bg-primary/20 rounded-xl">
-                <SparklesIcon className="w-8 h-8 text-primary" />
+            <div className="flex flex-col items-center gap-6 mb-8">
+              {/* Login Screen Logo - Red box with white brush icon */}
+              <div className="w-40 h-40 bg-primary rounded-3xl flex items-center justify-center shadow-[0_0_30px_rgba(220,38,38,0.6)] animate-pulse-fast transform hover:rotate-3 transition-transform duration-500">
+                <BrushIcon className="w-24 h-24 text-white drop-shadow-md" />
               </div>
               <div className="text-center">
                 <h2 className="text-2xl font-bold text-white">Hoş Geldiniz</h2>
-                <p className="text-slate-400">TdAnimator'u kullanmak için isminizi girin.</p>
+                <p className="text-slate-400 mt-2">TdAnimator'u kullanmak için isminizi girin.</p>
               </div>
             </div>
             
@@ -84,29 +85,30 @@ const App: React.FC = () => {
         </div>
       )}
 
-      <header className="sticky top-0 z-50 bg-dark/80 backdrop-blur-md border-b border-white/10">
+      <header className="sticky top-0 z-50 bg-dark/90 backdrop-blur-md border-b border-white/10 shadow-lg">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-2">
-              <div className="p-2 bg-primary/20 rounded-lg">
-                <SparklesIcon className="w-6 h-6 text-primary" />
+          <div className="flex items-center justify-between h-20">
+            <div className="flex items-center gap-4">
+              {/* Header Logo - Small Red box with white brush */}
+              <div className="h-12 w-12 bg-primary rounded-xl flex items-center justify-center shadow-lg shadow-primary/30 hover:scale-105 transition-transform duration-300">
+                 <BrushIcon className="w-7 h-7 text-white" />
               </div>
-              <div>
-                <h1 className="text-xl font-bold tracking-tight">TdAnimator</h1>
-                <p className="text-[10px] text-slate-400 leading-none">by Tda Company</p>
+              <div className="hidden sm:block">
+                <h1 className="text-2xl font-bold tracking-tight text-white">TdAnimator</h1>
+                <p className="text-[10px] text-slate-400 leading-none tracking-wide uppercase">by Tda Company</p>
               </div>
             </div>
 
             {/* Right Side Actions */}
             <div className="flex items-center gap-4">
-               {/* Global Settings Trigger - "En Yukarıya" */}
+               {/* Global Settings Trigger */}
                <button 
                   onClick={() => setIsSettingsOpen(true)}
                   className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all relative group"
                   title="Genel Ayarlar"
                 >
                   <SettingsIcon className="w-6 h-6" />
-                  <span className="absolute top-full right-0 mt-2 w-max px-2 py-1 text-xs text-white bg-surface border border-white/10 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                  <span className="absolute top-full right-0 mt-2 w-max px-2 py-1 text-xs text-white bg-surface border border-white/10 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow-xl z-50">
                     Görüntü Ayarları
                   </span>
                 </button>
@@ -136,7 +138,7 @@ const App: React.FC = () => {
 
       <main className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 transition-opacity duration-500 ${isModalOpen ? 'opacity-0' : 'opacity-100'}`}>
         <div className="flex flex-col gap-8">
-          <div className="text-center max-w-2xl mx-auto space-y-4">
+          <div className="text-center max-w-2xl mx-auto space-y-4 mb-4">
             <h2 className="text-4xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-white via-slate-200 to-slate-400">
               Hayal gücünüzü gerçeğe dönüştürün
             </h2>

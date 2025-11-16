@@ -2,9 +2,10 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { generateImage } from '../services/geminiService';
 import { AspectRatio, ASPECT_RATIOS, GeneratedImage, WatermarkTextEffect, WATERMARK_EFFECTS, WatermarkPosition, WATERMARK_POSITIONS, WatermarkSize, WATERMARK_SIZES, Resolution, RESOLUTIONS, StylePreset, STYLE_PRESETS } from '../types';
-import { WandIcon, DownloadIcon, AlertCircleIcon, LoaderIcon, ImageIcon, HistoryIcon, TrashIcon, ShareIcon, StampIcon, EditIcon, SettingsIcon, XIcon, UploadCloudIcon } from './Icons';
+import { WandIcon, DownloadIcon, AlertCircleIcon, LoaderIcon, ImageIcon, HistoryIcon, TrashIcon, ShareIcon, StampIcon, EditIcon, SettingsIcon, XIcon, UploadCloudIcon, ArchiveIcon, CheckSquareIcon, SquareIcon, RefreshCwIcon } from './Icons';
+import JSZip from 'jszip';
 
-const MAX_HISTORY_ITEMS = 5; // Base64 görseller çok yer kapladığı için varsayılan limiti düşürdük
+const MAX_HISTORY_ITEMS = 5; 
 
 interface ImageGeneratorProps {
   isSettingsOpen?: boolean;
@@ -43,6 +44,9 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
   const [watermarkPosition, setWatermarkPosition] = useState<WatermarkPosition>('bottomRight');
   const [watermarkSize, setWatermarkSize] = useState<WatermarkSize>('medium');
 
+  // Batch Selection States
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   // Image editing states
   const [isEditing, setIsEditing] = useState(false);
@@ -69,40 +73,36 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
     }
   }, []);
 
+  // Clear selection when exiting selection mode
+  useEffect(() => {
+    if (!isSelectionMode) {
+      setSelectedIds(new Set());
+    }
+  }, [isSelectionMode]);
+
   const saveToHistory = (newImage: GeneratedImage) => {
-    // Mevcut geçmişin başına yeniyi ekle
     let itemsToSave = [newImage, ...history];
 
-    // Sonsuz döngü koruması ve recursive retry mantığı
     while (itemsToSave.length > 0) {
       try {
-        // Maksimum sayıdan fazlaysa kırp
         if (itemsToSave.length > MAX_HISTORY_ITEMS) {
           itemsToSave = itemsToSave.slice(0, MAX_HISTORY_ITEMS);
         }
-
         const serialized = JSON.stringify(itemsToSave);
         localStorage.setItem('imagen_studio_history', serialized);
-        
-        // Başarılı olursa state'i güncelle ve döngüden çık
         setHistory(itemsToSave);
         break; 
       } catch (e: any) {
-        // Kota hatası mı? (QuotaExceededError)
         if (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014 || e.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
-          // Eğer listede birden fazla eleman varsa, en eskisini (sonuncuyu) çıkarıp tekrar dene
           if (itemsToSave.length > 1) {
-            itemsToSave.pop(); // En sonuncuyu sil
-            continue; // Döngü başa döner ve tekrar dener
+            itemsToSave.pop(); 
+            continue; 
           } else {
-            // Sadece 1 resim var ve o bile sığmıyorsa (Çok nadir)
             console.warn("Görsel çok büyük, LocalStorage kotası yetersiz.");
-            // Yine de state'e ekle ki kullanıcı sayfayı yenileyene kadar görsün
             setHistory([newImage, ...history].slice(0, MAX_HISTORY_ITEMS));
             break;
           }
         } else {
-          // Başka bir hata ise
           console.error("Geçmiş kaydedilemedi:", e);
           setHistory([newImage, ...history].slice(0, MAX_HISTORY_ITEMS));
           break;
@@ -115,10 +115,12 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
     if (confirm('Tüm geçmişi silmek istediğinize emin misiniz?')) {
       setHistory([]);
       localStorage.removeItem('imagen_studio_history');
+      setIsSelectionMode(false);
     }
   };
 
   const handleRestore = (item: GeneratedImage) => {
+    if (isSelectionMode) return; // Don't restore if in selection mode
     setGeneratedImage(item);
     setPrompt(item.prompt);
     setAspectRatio(item.aspectRatio as AspectRatio);
@@ -129,6 +131,76 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
     setWatermarkPosition(item.watermarkPosition || 'bottomRight');
     setWatermarkSize(item.watermarkSize || 'medium');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const toggleSelection = (timestamp: number) => {
+    const newSelected = new Set(selectedIds);
+    if (newSelected.has(timestamp)) {
+      newSelected.delete(timestamp);
+    } else {
+      newSelected.add(timestamp);
+    }
+    setSelectedIds(newSelected);
+  };
+
+  const handleSelectAll = () => {
+    if (selectedIds.size === history.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(history.map(item => item.timestamp)));
+    }
+  };
+
+  const handleBatchDelete = () => {
+    if (selectedIds.size === 0) return;
+    
+    if (confirm(`${selectedIds.size} adet görseli silmek istediğinize emin misiniz?`)) {
+        const newHistory = history.filter(item => !selectedIds.has(item.timestamp));
+        setHistory(newHistory);
+        localStorage.setItem('imagen_studio_history', JSON.stringify(newHistory));
+        setIsSelectionMode(false);
+    }
+  };
+
+  const handleBatchDownload = async () => {
+    if (selectedIds.size === 0) return;
+    
+    setIsLoading(true); 
+    
+    try {
+      const zip = new JSZip();
+      const folder = zip.folder("tdanimator-collection");
+      
+      let count = 0;
+      selectedIds.forEach((id) => {
+        const item = history.find(h => h.timestamp === id);
+        if (item) {
+           const ext = item.mimeType === 'image/png' ? 'png' : 'jpg';
+           // item.base64 is the raw base64 string
+           folder?.file(`tdanimator-${id}.${ext}`, item.base64, {base64: true});
+           count++;
+        }
+      });
+
+      if (count > 0) {
+        const content = await zip.generateAsync({type: "blob"});
+        const url = URL.createObjectURL(content);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `tdanimator-gallery-${Date.now()}.zip`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        
+        setIsSelectionMode(false);
+      }
+    } catch (e) {
+      console.error("ZIP creation failed", e);
+      setError("ZIP dosyası oluşturulurken bir hata oluştu.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -143,7 +215,6 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
       reader.onload = (event) => {
         if (event.target?.result) {
           setReferenceImage(event.target.result as string);
-          // Reset filters when new image is loaded
           setRefFilters({ hueRotate: 0, brightness: 100, contrast: 100 });
           setShowRefFilters(false);
           setError(null);
@@ -162,9 +233,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
     }
   };
 
-  // Helper to "bake" the CSS filters into a new Base64 string for the reference image
   const processReferenceImage = useCallback(async (base64Data: string, filters: typeof refFilters): Promise<string> => {
-    // If no filters changed, return original
     if (filters.hueRotate === 0 && filters.brightness === 100 && filters.contrast === 100) {
       return base64Data;
     }
@@ -181,12 +250,9 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
           return;
         }
 
-        // Apply standard CSS filters
         ctx.filter = `brightness(${filters.brightness}%) hue-rotate(${filters.hueRotate}deg) contrast(${filters.contrast}%)`;
         ctx.drawImage(img, 0, 0);
         
-        // Convert back to base64
-        // Determine format from header or default to png
         const mimeTypeMatch = base64Data.match(/^data:(image\/\w+);base64,/);
         const type = mimeTypeMatch ? mimeTypeMatch[1] : 'image/png';
         
@@ -197,62 +263,69 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
     });
   }, []);
 
-  const handleGenerate = useCallback(async () => {
-    if (!prompt.trim()) {
+  const handleGenerate = useCallback(async (overrideConfig?: Partial<GeneratedImage>) => {
+    // 1. Determine effective values (use override or current state)
+    const effectivePrompt = overrideConfig?.prompt ?? prompt;
+    const effectiveAspectRatio = (overrideConfig?.aspectRatio as AspectRatio) ?? aspectRatio;
+    const effectiveResolution = (overrideConfig?.resolution as Resolution) ?? resolution;
+    const effectiveStyle = (overrideConfig?.stylePreset as StylePreset) ?? stylePreset;
+
+    if (!effectivePrompt.trim()) {
       setError("Lütfen oluşturmak istediğiniz görsel için bir açıklama girin.");
       return;
+    }
+
+    // Update UI to match what is being generated
+    if (overrideConfig) {
+       setPrompt(effectivePrompt);
+       setAspectRatio(effectiveAspectRatio);
+       setResolution(effectiveResolution);
+       setStylePreset(effectiveStyle);
+       // Note: Regenerating usually means text-to-image unless user has manually re-uploaded the ref image
     }
 
     setIsLoading(true);
     setError(null);
     
     try {
-      let finalPrompt = prompt.trim();
+      let finalPrompt = effectivePrompt.trim();
       
-      // 1. Apply Style Preset
-      const selectedStyle = STYLE_PRESETS.find(s => s.value === stylePreset);
+      const selectedStyle = STYLE_PRESETS.find(s => s.value === effectiveStyle);
       if (selectedStyle && selectedStyle.promptModifier) {
+        // Use current referenceImage state even when regenerating, or null if none
         if (referenceImage) {
-            // If there is a reference image, be more explicit about applying style to it
             finalPrompt += `. Redraw this image in ${selectedStyle.label} style. ${selectedStyle.promptModifier}`;
         } else {
             finalPrompt += selectedStyle.promptModifier;
         }
       } else if (referenceImage) {
-         // Generic instruction if no specific style is chosen but image exists
          finalPrompt += ". Use the reference image as inspiration.";
       }
 
-      // 2. Apply Resolution suffix (Only relevant for Imagen model, but kept for consistency)
       if (!referenceImage) {
-          const selectedRes = RESOLUTIONS.find(r => r.value === resolution);
+          const selectedRes = RESOLUTIONS.find(r => r.value === effectiveResolution);
           if (selectedRes?.promptSuffix) {
             finalPrompt += selectedRes.promptSuffix;
           }
       }
 
-      // 3. Smart Enhance
       if (smartEnhance && !referenceImage) {
         finalPrompt += ", masterpiece, professional photography, cinematic lighting, sharp focus";
       }
 
-      // 4. Negative Prompt
       if (negativePrompt.trim()) {
          finalPrompt += ` --no ${negativePrompt.trim()}`; 
          finalPrompt += `. Exclude the following: ${negativePrompt.trim()}.`;
       }
 
-      // Process Reference Image if filters are applied
       let processedRefImage = referenceImage;
       if (referenceImage) {
         processedRefImage = await processReferenceImage(referenceImage, refFilters);
       }
 
-      // Pass referenceImage if it exists. 
-      // The service will handle switching to 'gemini-2.5-flash-image' if referenceImage is present.
       const result = await generateImage(
           finalPrompt, 
-          aspectRatio, 
+          effectiveAspectRatio, 
           outputFormat,
           processedRefImage || undefined
       );
@@ -260,11 +333,11 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
       const newImage: GeneratedImage = {
         base64: result.imageBytes,
         mimeType: result.mimeType,
-        prompt: prompt.trim(),
+        prompt: effectivePrompt.trim(),
         timestamp: Date.now(),
-        aspectRatio: aspectRatio,
-        resolution: resolution,
-        stylePreset: stylePreset,
+        aspectRatio: effectiveAspectRatio,
+        resolution: effectiveResolution,
+        stylePreset: effectiveStyle,
         watermarkTextEffect: watermarkTextEffect,
         watermarkOpacity: watermarkOpacity,
         watermarkPosition: watermarkPosition,
@@ -281,7 +354,11 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
     }
   }, [prompt, aspectRatio, resolution, stylePreset, negativePrompt, history, watermarkTextEffect, watermarkOpacity, watermarkPosition, watermarkSize, outputFormat, smartEnhance, referenceImage, refFilters, processReferenceImage]);
 
-  // Helper function to apply watermark on a canvas and return Data URL
+  const handleRegenerate = useCallback((item: GeneratedImage) => {
+    handleGenerate(item);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [handleGenerate]);
+
   const applyWatermark = useCallback(async (
     imageDataUrl: string, 
     text: string, 
@@ -922,7 +999,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
             </div>
 
             <button
-              onClick={handleGenerate}
+              onClick={() => handleGenerate()}
               disabled={isLoading || !prompt.trim()}
               className={`
                 w-full flex items-center justify-center gap-2 p-4 rounded-xl font-bold text-lg transition-all shadow-lg mt-4
@@ -1078,40 +1155,127 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
         {/* History Section */}
         {history.length > 0 && (
           <div className="bg-surface border border-white/10 rounded-2xl p-6">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex flex-wrap items-center justify-between mb-4 gap-4">
               <div className="flex items-center gap-2 text-slate-200">
                 <HistoryIcon className="w-5 h-5 text-primary" />
                 <h3 className="font-semibold text-lg">Geçmiş Çalışmalar</h3>
               </div>
-              <button 
-                onClick={clearHistory}
-                className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1 px-2 py-1 rounded hover:bg-red-500/10 transition-colors"
-              >
-                <TrashIcon className="w-3.5 h-3.5" />
-                Geçmişi Temizle
-              </button>
+              
+              <div className="flex items-center gap-2">
+                {isSelectionMode ? (
+                  <>
+                     <button 
+                      onClick={() => setIsSelectionMode(false)}
+                      className="text-xs text-slate-400 hover:text-slate-200 px-3 py-1.5 rounded-lg border border-white/10 hover:bg-white/5 transition-colors"
+                    >
+                      Vazgeç
+                    </button>
+                    <button 
+                      onClick={handleSelectAll}
+                      className="text-xs text-slate-300 hover:text-white px-3 py-1.5 rounded-lg border border-white/10 hover:bg-white/5 transition-colors"
+                    >
+                      {selectedIds.size === history.length ? 'Seçimi Kaldır' : 'Tümünü Seç'}
+                    </button>
+                    {selectedIds.size > 0 && (
+                        <>
+                             <button 
+                                onClick={handleBatchDelete}
+                                className="text-xs text-red-400 hover:text-red-300 bg-red-500/10 flex items-center gap-1 px-3 py-1.5 rounded-lg hover:bg-red-500/20 transition-colors"
+                            >
+                                <TrashIcon className="w-3.5 h-3.5" />
+                                Sil ({selectedIds.size})
+                            </button>
+                            <button 
+                                onClick={handleBatchDownload}
+                                className="text-xs text-white bg-primary flex items-center gap-1 px-3 py-1.5 rounded-lg hover:bg-primaryHover transition-colors shadow-lg shadow-primary/20"
+                            >
+                                <ArchiveIcon className="w-3.5 h-3.5" />
+                                ZIP İndir ({selectedIds.size})
+                            </button>
+                        </>
+                    )}
+                  </>
+                ) : (
+                  <>
+                     <button 
+                        onClick={() => setIsSelectionMode(true)}
+                        className="text-xs text-slate-400 hover:text-primary flex items-center gap-1 px-3 py-1.5 rounded-lg border border-white/5 hover:bg-white/5 transition-colors"
+                      >
+                        <CheckSquareIcon className="w-3.5 h-3.5" />
+                        Seç
+                      </button>
+                      <button 
+                        onClick={clearHistory}
+                        className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1 px-2 py-1 rounded hover:bg-red-500/10 transition-colors"
+                      >
+                        <TrashIcon className="w-3.5 h-3.5" />
+                        Temizle
+                      </button>
+                  </>
+                )}
+              </div>
             </div>
             
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
-              {history.map((item) => (
-                <button
-                  key={item.timestamp}
-                  onClick={() => handleRestore(item)}
-                  className="group relative aspect-square bg-black/40 rounded-xl overflow-hidden border border-white/5 hover:border-primary/50 hover:ring-2 hover:ring-primary/20 transition-all text-left"
-                >
-                  <img 
-                    src={`data:${item.mimeType};base64,${item.base64}`} 
-                    alt={item.prompt}
-                    className="w-full h-full object-cover"
-                    loading="lazy"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity p-3 flex flex-col justify-end">
-                    <p className="text-white text-[10px] line-clamp-3 font-medium leading-tight">
-                      {item.prompt}
-                    </p>
-                  </div>
-                </button>
-              ))}
+              {history.map((item) => {
+                const isSelected = selectedIds.has(item.timestamp);
+                return (
+                    <button
+                    key={item.timestamp}
+                    onClick={() => isSelectionMode ? toggleSelection(item.timestamp) : handleRestore(item)}
+                    className={`
+                        group relative aspect-square bg-black/40 rounded-xl overflow-hidden border transition-all text-left
+                        ${isSelected ? 'border-primary ring-2 ring-primary/30' : 'border-white/5 hover:border-primary/50 hover:ring-2 hover:ring-primary/20'}
+                    `}
+                    >
+                        <img 
+                            src={`data:${item.mimeType};base64,${item.base64}`} 
+                            alt={item.prompt}
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                        />
+                        
+                        {/* Selection Overlay */}
+                        {isSelectionMode && (
+                            <div className={`absolute top-2 right-2 z-10`}>
+                                {isSelected ? (
+                                    <div className="bg-primary text-white rounded-md shadow-sm p-0.5">
+                                        <CheckSquareIcon className="w-5 h-5" />
+                                    </div>
+                                ) : (
+                                    <div className="bg-black/40 text-white/70 rounded-md backdrop-blur-sm p-0.5 hover:bg-black/60 hover:text-white">
+                                        <SquareIcon className="w-5 h-5" />
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Regenerate Button (Only when not in selection mode) */}
+                        {!isSelectionMode && (
+                            <div className="absolute top-2 left-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <div
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleRegenerate(item);
+                                    }}
+                                    className="p-1.5 bg-black/50 hover:bg-primary text-white rounded-lg backdrop-blur-sm transition-colors cursor-pointer"
+                                    title="Bu ayarlarla tekrar oluştur"
+                                >
+                                    <RefreshCwIcon className="w-4 h-4" />
+                                </div>
+                            </div>
+                        )}
+
+                        <div className={`absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent transition-opacity p-3 flex flex-col justify-end ${isSelectionMode ? (isSelected ? 'opacity-40' : 'opacity-0') : 'opacity-0 group-hover:opacity-100'}`}>
+                            {!isSelectionMode && (
+                                <p className="text-white text-[10px] line-clamp-3 font-medium leading-tight">
+                                {item.prompt}
+                                </p>
+                            )}
+                        </div>
+                    </button>
+                );
+              })}
             </div>
           </div>
         )}
