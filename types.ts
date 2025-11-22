@@ -1,7 +1,3 @@
-
-
-
-
 export interface GeneratedImage {
   base64: string;
   mimeType: string;
@@ -22,6 +18,14 @@ export interface GeneratedImage {
   mood?: string;
   seed?: number;
   model?: string; // Stores which model generated this
+}
+
+// User & Role Types
+export type UserRole = 'admin' | 'editor' | 'viewer';
+
+export interface User {
+  username: string;
+  role: UserRole;
 }
 
 export type AspectRatio = '1:1' | '3:4' | '4:3' | '16:9' | '9:16';
@@ -180,3 +184,14 @@ export const MOODS: { value: Mood; label: string; promptModifier: string }[] = [
     { value: 'romantic', label: 'Romantik', promptModifier: ', romantic atmosphere, soft lighting, love, dreamy' },
     { value: 'eerie', label: 'Ürkütücü', promptModifier: ', eerie atmosphere, unsettling, horror vibe, haunted' },
 ];
+
+export interface AICriticAnalysis {
+  score: number;
+  critique: string[];
+  goodPoints: string[];
+  improvedPrompt: string;
+}
+
+// AI Critic Settings Types
+export type CriticPersona = 'strict' | 'balanced' | 'gentle' | 'roast';
+export type AnalysisDepth = 'brief' | 'detailed' | 'technical';

@@ -1,6 +1,5 @@
-
 import { GoogleGenAI, Modality, Type } from "@google/genai";
-import { AspectRatio, AIModel } from "../types";
+import { AspectRatio, AIModel, AICriticAnalysis, CriticPersona, AnalysisDepth } from "../types";
 
 // Initialize the client
 const getAiClient = () => {
@@ -37,12 +36,16 @@ export const generateImage = async (
       // Extract pure base64 if it contains the data URL prefix
       const base64Data = referenceImageBase64.replace(/^data:image\/\w+;base64,/, "");
       
+      // Force the model to generate an image instead of chatting about the reference
+      // Append a strong directive to the prompt
+      const finalPrompt = `${prompt} . Generate a high-quality image based on this reference. Do NOT provide text output, provide IMAGE output.`;
+
       const response = await ai.models.generateContent({
         model: model,
         contents: {
           parts: [
             {
-              text: prompt,
+              text: finalPrompt,
             },
             {
               inlineData: {
@@ -80,21 +83,20 @@ export const generateImage = async (
 
       // Find the image part, do not assume it is the first part.
       let generatedPart = null;
+      let textResponse = "";
+
       for (const part of candidate.content.parts) {
         if (part.inlineData) {
           generatedPart = part;
-          break;
+        }
+        if (part.text) {
+          textResponse += part.text;
         }
       }
       
       if (!generatedPart || !generatedPart.inlineData || !generatedPart.inlineData.data) {
-        // Try to find text explanation
-        const textPart = candidate.content.parts.find(p => p.text);
-        if (textPart && textPart.text) {
-             const text = textPart.text.trim();
-             if (text.length > 0) {
-                 throw new Error(`Model görsel oluşturmadı. Yanıt: "${text.substring(0, 150)}..."`);
-             }
+        if (textResponse.trim().length > 0) {
+             throw new Error(`Model görsel oluşturmadı. Model Mesajı: "${textResponse.substring(0, 200)}..."`);
         }
         throw new Error("API geçerli bir görsel verisi döndürmedi.");
       }
@@ -151,21 +153,20 @@ export const generateImage = async (
 
           // Find the image part
           let generatedPart = null;
+          let textResponse = "";
+
           for (const part of candidate.content.parts) {
             if (part.inlineData) {
                 generatedPart = part;
-                break;
+            }
+            if (part.text) {
+                textResponse += part.text;
             }
           }
 
           if (!generatedPart || !generatedPart.inlineData || !generatedPart.inlineData.data) {
-             // If no image returned (only text?), try to grab text for error
-             const textPart = candidate.content.parts.find(p => p.text);
-             if (textPart && textPart.text) {
-                 const text = textPart.text.trim();
-                 if (text.length > 0) {
-                     throw new Error(`Model görsel yerine metin döndürdü: "${text.substring(0, 150)}..."`);
-                 }
+             if (textResponse.trim().length > 0) {
+                 throw new Error(`Model görsel oluşturmadı. Model Mesajı: "${textResponse.substring(0, 200)}..."`);
              }
              throw new Error(`${modelName} geçerli görsel verisi döndürmedi.`);
           }
@@ -192,8 +193,9 @@ export const generateImage = async (
     else if (errorMessage.includes("no_image") || errorMessage.includes("görsel oluşturulamayacağına karar verdi")) {
        friendlyMessage = "🚫 Görsel Oluşturulamadı: Model isteğinizi reddetti (NO_IMAGE). Lütfen daha basit veya net bir prompt deneyin.";
     }
-    else if (errorMessage.includes("model görsel yerine metin döndürdü") || errorMessage.includes("model görsel oluşturmadı")) {
-       friendlyMessage = "⚠️ Model Reddi: Model görsel yerine metin yanıtı verdi. Prompt'unuzu değiştirerek tekrar deneyin.";
+    else if (errorMessage.includes("model görsel oluşturmadı") || errorMessage.includes("model mesajı")) {
+       // Extract the message if possible or show generic
+       friendlyMessage = `⚠️ Model Reddi: ${error.message.replace("Model görsel oluşturmadı.", "")}`;
     }
     else if (errorMessage.includes("429") || errorMessage.includes("resource_exhausted") || errorMessage.includes("quota")) {
       friendlyMessage = "⏳ Kota Sınırı Aşıldı: Servis şu anda çok yoğun veya günlük kullanım limitiniz doldu. Lütfen birkaç dakika bekleyip tekrar deneyin.";
@@ -330,5 +332,110 @@ export const enhancePrompt = async (prompt: string): Promise<{label: string; tex
   } catch (error) {
     console.error("Prompt enhancement failed", error);
     throw new Error("Prompt geliştirme başarısız oldu.");
+  }
+};
+
+export const analyzeImage = async (
+    imageBase64: string, 
+    userInstruction?: string,
+    config?: { persona?: CriticPersona; depth?: AnalysisDepth }
+): Promise<AICriticAnalysis> => {
+  try {
+    const ai = getAiClient();
+    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+
+    const instructionToUse = userInstruction || 'Bu görseli analiz et ve eleştir.';
+
+    // Dynamic System Prompt Construction based on Settings
+    const persona = config?.persona || 'balanced';
+    const depth = config?.depth || 'detailed';
+
+    let personaInstruction = "";
+    if (persona === 'strict') {
+        personaInstruction = "Role: Ruthless, perfectionist art critic. Focus heavily on flaws, technical errors, and anatomy issues. Do not hold back.";
+    } else if (persona === 'gentle') {
+        personaInstruction = "Role: Kind, supportive art coach. Focus on potential, effort, and artistic vision. Frame flaws as 'opportunities for growth'. Be encouraging.";
+    } else if (persona === 'roast') {
+        personaInstruction = "Role: Sarcastic comedian. Roast the image's flaws with wit and humor, but still be observant.";
+    } else { // balanced
+        personaInstruction = "Role: Constructive, professional art critic. Balance your critique with objective observation.";
+    }
+
+    let depthInstruction = "";
+    if (depth === 'brief') {
+        depthInstruction = "Keep descriptions short, punchy, and to the point. Max 1 sentence per point.";
+    } else if (depth === 'technical') {
+        depthInstruction = "Focus on technical terms: lighting composition, color theory, anatomy, perspective, rendering techniques.";
+    } else { // detailed
+        depthInstruction = "Provide detailed explanations for each point.";
+    }
+
+    const promptText = `${personaInstruction}
+            
+            **INPUT:**
+            Image: [Provided via inline data]
+            User Instruction: "${instructionToUse}"
+            Depth Mode: ${depthInstruction}
+
+            **TASK 1: Language Detection & Output Language**
+            - **DEFAULT LANGUAGE IS TURKISH.** Unless the "User Instruction" is explicitly in English or another language, you **MUST** output the 'critique' and 'goodPoints' arrays in **TURKISH**.
+            - If the user writes in English, you may reply in English. 
+            - But for the general analysis without specific text input, use **TURKISH**.
+
+            **TASK 2: Analysis**
+            - Analyze the provided image for aesthetic quality, flaws, anatomy issues, lighting, and composition.
+            - Give a score out of 10.
+
+            **TASK 3: Lists (CRITICAL RULES)**
+            - **Flaws ('critique'):** List at least 3 specific flaws or areas for improvement (In TURKISH by default).
+            - **Positives ('goodPoints'):** List at least 3 POSITIVE aspects. **IMPORTANT:** Even if the image is of low quality or has many errors, you MUST find positive traits (e.g., "Interesting color palette", "Good concept", "Dynamic composition potential", "Effort"). **The 'goodPoints' array MUST NOT be empty.** (In TURKISH by default).
+
+            **TASK 4: Solution ('improvedPrompt')**
+            - Write a HIGHLY DETAILED prompt in **ENGLISH** (standard for image generators).
+            - This prompt should describe the scene but EXPLICITLY FIX all the flaws mentioned.
+            - Add quality boosters like "masterpiece, best quality, 4k, highly detailed".
+            - If the User Instruction asked for a specific change (e.g., "make it cyberpunk"), ensure the prompt reflects this.
+            
+            **OUTPUT FORMAT:**
+            Return ONLY JSON.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: {
+        parts: [
+          {
+            inlineData: {
+              mimeType: 'image/jpeg',
+              data: base64Data
+            }
+          },
+          {
+            text: promptText
+          }
+        ]
+      },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            score: { type: Type.NUMBER },
+            critique: { type: Type.ARRAY, items: { type: Type.STRING } },
+            goodPoints: { type: Type.ARRAY, items: { type: Type.STRING } },
+            improvedPrompt: { type: Type.STRING }
+          },
+          required: ["score", "critique", "goodPoints", "improvedPrompt"]
+        }
+      }
+    });
+
+    const text = response.text;
+    if (!text) throw new Error("Empty response from AI Critic");
+
+    return JSON.parse(text);
+
+  } catch (error) {
+    console.error("AI Analysis failed", error);
+    throw new Error("Yapay zeka analizi sırasında bir hata oluştu.");
   }
 };

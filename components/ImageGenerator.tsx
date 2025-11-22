@@ -1,7 +1,9 @@
 
+
+
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { generateImage, suggestSmartCrop, enhancePrompt } from '../services/geminiService';
-import { AspectRatio, ASPECT_RATIOS, GeneratedImage, WatermarkTextEffect, WATERMARK_EFFECTS, WatermarkPosition, WATERMARK_POSITIONS, WatermarkSize, WATERMARK_SIZES, Resolution, RESOLUTIONS, StylePreset, STYLE_PRESETS, LightingType, LIGHTING_TYPES, CameraAngle, CAMERA_ANGLES, ColorTone, COLOR_TONES, Composition, COMPOSITIONS, Mood, MOODS, AIModel, AI_MODELS } from '../types';
+import { AspectRatio, ASPECT_RATIOS, GeneratedImage, WatermarkTextEffect, WATERMARK_EFFECTS, WatermarkPosition, WATERMARK_POSITIONS, WatermarkSize, WATERMARK_SIZES, Resolution, RESOLUTIONS, StylePreset, STYLE_PRESETS, LightingType, LIGHTING_TYPES, CameraAngle, CAMERA_ANGLES, ColorTone, COLOR_TONES, Composition, COMPOSITIONS, Mood, MOODS, AIModel, AI_MODELS, User } from '../types';
 import { WandIcon, DownloadIcon, AlertCircleIcon, LoaderIcon, ImageIcon, HistoryIcon, TrashIcon, ShareIcon, StampIcon, EditIcon, SettingsIcon, XIcon, UploadCloudIcon, ArchiveIcon, CheckSquareIcon, SquareIcon, RefreshCwIcon, LayersIcon, BrushIcon, SparklesIcon, CropIcon, RotateCwIcon, FlipVerticalIcon, SlidersIcon, MaximizeIcon, CopyIcon, ZapIcon, ScanEyeIcon, CpuIcon, BrainIcon, RabbitIcon, LightbulbIcon } from './Icons';
 import JSZip from 'jszip';
 
@@ -10,6 +12,7 @@ const MAX_HISTORY_ITEMS = 5;
 interface ImageGeneratorProps {
   isSettingsOpen?: boolean;
   onSettingsClose?: () => void;
+  user: User | null;
 }
 
 // Advanced Editor Types
@@ -81,7 +84,7 @@ const CollapsibleSection = ({
   </div>
 );
 
-const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false, onSettingsClose = () => {} }) => {
+const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false, onSettingsClose = () => {}, user }) => {
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1');
   const [resolution, setResolution] = useState<Resolution>('hd');
@@ -150,6 +153,11 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  // Permissions Check
+  const canGenerate = user?.role === 'admin' || user?.role === 'editor';
+  const canDelete = user?.role === 'admin';
+  const canEdit = user?.role === 'admin' || user?.role === 'editor';
+
   // Load history from localStorage on mount
   useEffect(() => {
     try {
@@ -206,6 +214,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
   };
 
   const clearHistory = () => {
+    if (!canDelete) return;
     if (confirm('Tüm geçmişi silmek istediğinize emin misiniz?')) {
       setHistory([]);
       localStorage.removeItem('imagen_studio_history');
@@ -230,7 +239,6 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
     if (item.composition) setComposition(item.composition as Composition);
     if (item.mood) setMood(item.mood as Mood);
     if (item.seed) setSeed(item.seed);
-    // If previous model is not in current list (e.g. imagen-3), fallback to default
     if (item.model && (item.model === 'gemini-flash' || item.model === 'gemini-lite')) {
         setSelectedModel(item.model as AIModel);
     } else {
@@ -241,6 +249,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
   };
 
   const handleUseAsReference = (item: GeneratedImage) => {
+    if (!canGenerate) return;
     const dataUrl = `data:${item.mimeType};base64,${item.base64}`;
     setReferenceImage(dataUrl);
     
@@ -277,6 +286,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
   };
 
   const handleBatchDelete = () => {
+    if (!canDelete) return;
     if (selectedIds.size === 0) return;
     if (confirm(`${selectedIds.size} adet görseli silmek istediğinize emin misiniz?`)) {
         const newHistory = history.filter(item => !selectedIds.has(item.timestamp));
@@ -324,6 +334,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
   };
 
   const handleBatchEdit = () => {
+    if (!canEdit) return;
     if (selectedIds.size === 0) return;
     
     // Find the first selected image to use as reference for the editor
@@ -341,6 +352,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
   };
 
   const handleBatchVariations = async () => {
+    if (!canGenerate) return;
     if (selectedIds.size === 0) return;
     if (!batchVariationPrompt.trim()) {
       setError("Lütfen varyasyon için bir ek açıklama girin.");
@@ -393,6 +405,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
 
   // Prompt Enhancement Handler
   const handleEnhancePrompt = async () => {
+    if (!canGenerate) return;
     if (!prompt.trim()) return;
     setIsEnhancingPrompt(true);
     setShowPromptSuggestions(false);
@@ -412,8 +425,9 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!canGenerate) return;
     setIsDragging(true);
-  }, []);
+  }, [canGenerate]);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -425,6 +439,8 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
+    
+    if (!canGenerate) return;
 
     const file = e.dataTransfer.files?.[0];
     if (file) {
@@ -446,9 +462,10 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
         };
         reader.readAsDataURL(file);
     }
-  }, []);
+  }, [canGenerate]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canGenerate) return;
     const file = e.target.files?.[0];
     if (file) {
       if (file.size > 5 * 1024 * 1024) {
@@ -474,6 +491,11 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
   };
 
   const handleGenerate = useCallback(async (overrideConfig?: Partial<GeneratedImage>) => {
+    if (!canGenerate) {
+        setError("Bu işlem için yetkiniz bulunmuyor (Salt Okunur Mod).");
+        return;
+    }
+
     const effectivePrompt = overrideConfig?.prompt ?? prompt;
     const effectiveAspectRatio = (overrideConfig?.aspectRatio as AspectRatio) ?? aspectRatio;
     const effectiveResolution = (overrideConfig?.resolution as Resolution) ?? resolution;
@@ -603,18 +625,24 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
     } finally {
       setIsLoading(false);
     }
-  }, [prompt, aspectRatio, resolution, stylePreset, negativePrompt, history, watermarkTextEffect, watermarkOpacity, watermarkPosition, watermarkSize, outputFormat, smartEnhance, referenceImage, lighting, cameraAngle, colorTone, composition, mood, seed, selectedModel]);
+  }, [prompt, aspectRatio, resolution, stylePreset, negativePrompt, history, watermarkTextEffect, watermarkOpacity, watermarkPosition, watermarkSize, outputFormat, smartEnhance, referenceImage, lighting, cameraAngle, colorTone, composition, mood, seed, selectedModel, canGenerate]);
 
   const handleRegenerate = useCallback((item: GeneratedImage) => {
+    if (!canGenerate) {
+        setError("Yetkiniz yok.");
+        return;
+    }
     handleGenerate(item);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [handleGenerate]);
+  }, [handleGenerate, canGenerate]);
 
   // ------------------------------------------------------------------
   // EDITOR FUNCTIONS
   // ------------------------------------------------------------------
 
   const openEditor = (source: 'generated' | 'reference', imageItem?: GeneratedImage) => {
+    if (!canEdit) return;
+
     let src = '';
     if (source === 'generated' && imageItem) {
         src = `data:${imageItem.mimeType};base64,${imageItem.base64}`;
@@ -775,6 +803,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
 
   const handleSaveEditor = async () => {
     if (!canvasRef.current || !editingImageSrc) return;
+    if (!canEdit) return;
     
     if (editTarget === 'batch') {
         setIsEditing(false);
@@ -998,11 +1027,11 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                     if (showPromptSuggestions) setShowPromptSuggestions(false);
                   }}
                   onKeyDown={handleKeyDown}
-                  disabled={isLoading}
+                  disabled={isLoading || !canGenerate}
                 />
 
                 {/* Prompt Enhancement Button */}
-                {prompt.trim().length > 3 && !isLoading && (
+                {prompt.trim().length > 3 && !isLoading && canGenerate && (
                    <button
                      onClick={handleEnhancePrompt}
                      disabled={isEnhancingPrompt}
@@ -1025,10 +1054,11 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                         accept="image/*"
                         className="hidden"
                         id="image-upload"
+                        disabled={!canGenerate}
                       />
                       <label 
-                        htmlFor="image-upload" 
-                        className="cursor-pointer flex items-center gap-2 text-slate-400 hover:text-primary transition-colors p-2 rounded-lg hover:bg-white/5"
+                        htmlFor={canGenerate ? "image-upload" : undefined}
+                        className={`cursor-pointer flex items-center gap-2 text-slate-400 hover:text-primary transition-colors p-2 rounded-lg hover:bg-white/5 ${!canGenerate ? 'opacity-50 cursor-not-allowed' : ''}`}
                         title="Referans Resim Ekle veya Sürükleyip Bırakın"
                       >
                         <UploadCloudIcon className="w-5 h-5" />
@@ -1103,13 +1133,15 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                           </div>
                       </div>
                       <div className="flex items-center gap-1">
-                        <button 
-                            onClick={() => openEditor('reference')}
-                            className="p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-                            title="Görseli Düzenle (Kırp/Döndür)"
-                        >
-                            <EditIcon className="w-4 h-4" />
-                        </button>
+                        {canEdit && (
+                            <button 
+                                onClick={() => openEditor('reference')}
+                                className="p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                                title="Görseli Düzenle (Kırp/Döndür)"
+                            >
+                                <EditIcon className="w-4 h-4" />
+                            </button>
+                        )}
                         <button 
                             onClick={removeReferenceImage}
                             className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
@@ -1221,10 +1253,10 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
 
             <button
               onClick={() => handleGenerate()}
-              disabled={isLoading || !prompt.trim()}
+              disabled={isLoading || !prompt.trim() || !canGenerate}
               className={`
                 w-full flex items-center justify-center gap-2 p-4 rounded-xl font-bold text-lg transition-all shadow-lg mt-4
-                ${isLoading || !prompt.trim()
+                ${isLoading || !prompt.trim() || !canGenerate
                   ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
                   : 'bg-primary hover:bg-primaryHover text-white hover:shadow-primary/25 shadow-primary/10'}
               `}
@@ -1234,6 +1266,11 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                   <LoaderIcon className="animate-spin w-5 h-5" />
                   {referenceImage ? 'Dönüştürülüyor...' : 'Oluşturuluyor...'}
                 </>
+              ) : !canGenerate ? (
+                 <>
+                   <WandIcon className="w-5 h-5" />
+                   Oluşturma Yetkisi Yok (İzleyici)
+                 </>
               ) : (
                 <>
                   <WandIcon className="w-5 h-5" />
@@ -1299,21 +1336,25 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                         
                         <div className="absolute inset-0 flex items-end justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 p-6 bg-gradient-to-t from-black/80 via-transparent to-transparent rounded-lg">
                             <div className="flex flex-wrap justify-center gap-3 transform translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
-                              <button 
-                                  onClick={() => handleUseAsReference(generatedImage)}
-                                  className="flex items-center gap-2 bg-primary hover:bg-primaryHover border border-white/10 text-white font-bold py-3 px-6 rounded-full transition-colors shadow-lg"
-                                  title="Bu görseli referans alarak yeni varyasyonlar oluştur"
-                              >
-                                  <LayersIcon className="w-5 h-5" />
-                                  Referans Al
-                              </button>
-                              <button 
-                                  onClick={() => openEditor('generated', generatedImage)}
-                                  className="flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 text-white font-bold py-3 px-6 rounded-full hover:bg-white/20 transition-colors shadow-lg"
-                              >
-                                  <EditIcon className="w-5 h-5" />
-                                  Düzenle
-                              </button>
+                              {canGenerate && (
+                                  <button 
+                                      onClick={() => handleUseAsReference(generatedImage)}
+                                      className="flex items-center gap-2 bg-primary hover:bg-primaryHover border border-white/10 text-white font-bold py-3 px-6 rounded-full transition-colors shadow-lg"
+                                      title="Bu görseli referans alarak yeni varyasyonlar oluştur"
+                                  >
+                                      <LayersIcon className="w-5 h-5" />
+                                      Referans Al
+                                  </button>
+                              )}
+                              {canEdit && (
+                                  <button 
+                                      onClick={() => openEditor('generated', generatedImage)}
+                                      className="flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 text-white font-bold py-3 px-6 rounded-full hover:bg-white/20 transition-colors shadow-lg"
+                                  >
+                                      <EditIcon className="w-5 h-5" />
+                                      Düzenle
+                                  </button>
+                              )}
                               <button 
                                   onClick={() => handleShare(generatedImage)}
                                   className="flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 text-white font-bold py-3 px-6 rounded-full hover:bg-white/20 transition-colors shadow-lg"
@@ -1338,7 +1379,9 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                         </div>
                         <h3 className="text-xl font-medium text-white">Henüz görsel oluşturulmadı</h3>
                         <p className="text-slate-400">
-                            Sol panele bir açıklama girin veya bir referans resim yükleyerek görselinizi oluşturun.
+                            {canGenerate 
+                             ? "Sol panele bir açıklama girin veya bir referans resim yükleyerek görselinizi oluşturun."
+                             : "Görüntüleyici modundasınız. Sadece geçmiş çalışmaları inceleyebilirsiniz."}
                         </p>
                     </div>
                 )}
@@ -1359,6 +1402,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                   <>
                      {selectedIds.size > 0 && (
                         <>
+                            {canEdit && (
                              <button 
                                 onClick={handleBatchEdit}
                                 className="text-xs text-white bg-blue-600 flex items-center gap-1 px-3 py-1.5 rounded-lg hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
@@ -1367,6 +1411,8 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                                 <CopyIcon className="w-3.5 h-3.5" />
                                 Toplu Düzenle
                             </button>
+                            )}
+                            {canGenerate && (
                              <button 
                                 onClick={() => setShowVariationInput(true)}
                                 className="text-xs text-white bg-purple-600 flex items-center gap-1 px-3 py-1.5 rounded-lg hover:bg-purple-700 transition-colors shadow-lg shadow-purple-600/20"
@@ -1375,6 +1421,8 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                                 <ZapIcon className="w-3.5 h-3.5" />
                                 Toplu Varyasyon
                             </button>
+                            )}
+                            {canDelete && (
                              <button 
                                 onClick={handleBatchDelete}
                                 className="text-xs text-red-400 hover:text-red-300 bg-red-500/10 flex items-center gap-1 px-3 py-1.5 rounded-lg hover:bg-red-500/20 transition-colors"
@@ -1382,6 +1430,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                                 <TrashIcon className="w-3.5 h-3.5" />
                                 Sil ({selectedIds.size})
                             </button>
+                            )}
                             <button 
                                 onClick={handleBatchDownload}
                                 className="text-xs text-white bg-primary flex items-center gap-1 px-3 py-1.5 rounded-lg hover:bg-primaryHover transition-colors shadow-lg shadow-primary/20"
@@ -1417,6 +1466,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                         <CheckSquareIcon className="w-3.5 h-3.5" />
                         Seç / Toplu İşlem
                       </button>
+                      {canDelete && (
                       <button 
                         onClick={clearHistory}
                         className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1 px-2 py-1 rounded hover:bg-red-500/10 transition-colors"
@@ -1424,6 +1474,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                         <TrashIcon className="w-3.5 h-3.5" />
                         Temizle
                       </button>
+                      )}
                   </>
                 )}
               </div>
@@ -1513,6 +1564,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                         {/* Action Buttons (Only when not in selection mode) */}
                         {!isSelectionMode && (
                             <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/90 via-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex justify-center gap-2">
+                                {canGenerate && (
                                 <div
                                     onClick={(e) => {
                                         e.stopPropagation();
@@ -1523,6 +1575,8 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                                 >
                                     <RefreshCwIcon className="w-4 h-4" />
                                 </div>
+                                )}
+                                {canGenerate && (
                                  <div
                                     onClick={(e) => {
                                         e.stopPropagation();
@@ -1534,6 +1588,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                                     <LayersIcon className="w-3.5 h-3.5" />
                                     <span className="text-[10px] font-bold">Ref</span>
                                 </div>
+                                )}
                             </div>
                         )}
                     </button>
@@ -1662,14 +1717,18 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
             </div>
             
             <div className="mt-8 pt-4 border-t border-white/10">
-                <button onClick={onSettingsClose} className="w-full bg-primary hover:bg-primaryHover text-white font-bold py-3 px-6 rounded-xl transition-all">Kaydet ve Kapat</button>
+                {canGenerate ? (
+                    <button onClick={onSettingsClose} className="w-full bg-primary hover:bg-primaryHover text-white font-bold py-3 px-6 rounded-xl transition-all">Kaydet ve Kapat</button>
+                ) : (
+                    <button onClick={onSettingsClose} className="w-full bg-slate-700 text-white font-bold py-3 px-6 rounded-xl transition-all">Kapat</button>
+                )}
             </div>
           </div>
         </div>
       )}
 
       {/* ADVANCED IMAGE EDITOR MODAL */}
-      {isEditing && editingImageSrc && (
+      {isEditing && editingImageSrc && canEdit && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
           <div className="w-full max-w-6xl h-[90vh] bg-darker border border-white/10 rounded-3xl shadow-2xl overflow-hidden flex flex-col">
              
