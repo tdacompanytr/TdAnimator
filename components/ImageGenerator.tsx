@@ -1,8 +1,8 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { generateImage } from '../services/geminiService';
-import { AspectRatio, ASPECT_RATIOS, GeneratedImage, WatermarkTextEffect, WATERMARK_EFFECTS, WatermarkPosition, WATERMARK_POSITIONS, WatermarkSize, WATERMARK_SIZES, Resolution, RESOLUTIONS, StylePreset, STYLE_PRESETS, LightingType, LIGHTING_TYPES, CameraAngle, CAMERA_ANGLES, ColorTone, COLOR_TONES } from '../types';
-import { WandIcon, DownloadIcon, AlertCircleIcon, LoaderIcon, ImageIcon, HistoryIcon, TrashIcon, ShareIcon, StampIcon, EditIcon, SettingsIcon, XIcon, UploadCloudIcon, ArchiveIcon, CheckSquareIcon, SquareIcon, RefreshCwIcon, LayersIcon } from './Icons';
+import { generateImage, suggestSmartCrop, enhancePrompt } from '../services/geminiService';
+import { AspectRatio, ASPECT_RATIOS, GeneratedImage, WatermarkTextEffect, WATERMARK_EFFECTS, WatermarkPosition, WATERMARK_POSITIONS, WatermarkSize, WATERMARK_SIZES, Resolution, RESOLUTIONS, StylePreset, STYLE_PRESETS, LightingType, LIGHTING_TYPES, CameraAngle, CAMERA_ANGLES, ColorTone, COLOR_TONES, Composition, COMPOSITIONS, Mood, MOODS, AIModel, AI_MODELS } from '../types';
+import { WandIcon, DownloadIcon, AlertCircleIcon, LoaderIcon, ImageIcon, HistoryIcon, TrashIcon, ShareIcon, StampIcon, EditIcon, SettingsIcon, XIcon, UploadCloudIcon, ArchiveIcon, CheckSquareIcon, SquareIcon, RefreshCwIcon, LayersIcon, BrushIcon, SparklesIcon, CropIcon, RotateCwIcon, FlipVerticalIcon, SlidersIcon, MaximizeIcon, CopyIcon, ZapIcon, ScanEyeIcon, CpuIcon, BrainIcon, RabbitIcon, LightbulbIcon } from './Icons';
 import JSZip from 'jszip';
 
 const MAX_HISTORY_ITEMS = 5; 
@@ -11,6 +11,75 @@ interface ImageGeneratorProps {
   isSettingsOpen?: boolean;
   onSettingsClose?: () => void;
 }
+
+// Advanced Editor Types
+interface EditState {
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  hueRotate: number;
+  sepia: number;
+  blur: number;
+  rotation: number; // 0, 90, 180, 270
+  flipH: boolean;
+  flipV: boolean;
+  cropRatio: 'original' | '1:1' | '16:9' | '4:3' | '9:16';
+  zoom: number; // For simple cropping simulation
+}
+
+const DEFAULT_EDIT_STATE: EditState = {
+  brightness: 100,
+  contrast: 100,
+  saturation: 100,
+  hueRotate: 0,
+  sepia: 0,
+  blur: 0,
+  rotation: 0,
+  flipH: false,
+  flipV: false,
+  cropRatio: 'original',
+  zoom: 1,
+};
+
+// Helper component for collapsible sections
+const CollapsibleSection = ({ 
+  title, 
+  icon, 
+  isOpen, 
+  onToggle, 
+  children 
+}: { 
+  title: string; 
+  icon: React.ReactNode; 
+  isOpen: boolean; 
+  onToggle: () => void; 
+  children?: React.ReactNode;
+}) => (
+  <div className="border border-white/10 rounded-xl bg-surface/50 overflow-hidden transition-all duration-200">
+    <button
+      onClick={onToggle}
+      className="w-full flex items-center justify-between p-4 text-left hover:bg-white/5 transition-colors"
+    >
+      <div className="flex items-center gap-3 text-sm font-bold text-slate-200 uppercase tracking-wider">
+        <div className="text-primary">{icon}</div>
+        {title}
+      </div>
+      <div className={`text-slate-400 transform transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}>
+         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+      </div>
+    </button>
+    
+    <div 
+      className={`overflow-hidden transition-all duration-300 ease-in-out ${isOpen ? 'max-h-[1200px] opacity-100' : 'max-h-0 opacity-0'}`}
+    >
+      <div className="p-4 pt-0 border-t border-white/5">
+         <div className="pt-4 space-y-6">
+            {children}
+         </div>
+      </div>
+    </div>
+  </div>
+);
 
 const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false, onSettingsClose = () => {} }) => {
   const [prompt, setPrompt] = useState('');
@@ -23,14 +92,15 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
   
   // Reference Image State
   const [referenceImage, setReferenceImage] = useState<string | null>(null);
-  const [showRefFilters, setShowRefFilters] = useState(false);
-  const [refFilters, setRefFilters] = useState({
-    hueRotate: 0,
-    brightness: 100,
-    contrast: 100
-  });
+  const [isDragging, setIsDragging] = useState(false);
+  
+  // Prompt Enhancement State
+  const [isEnhancingPrompt, setIsEnhancingPrompt] = useState(false);
+  const [promptSuggestions, setPromptSuggestions] = useState<{label: string, text: string}[]>([]);
+  const [showPromptSuggestions, setShowPromptSuggestions] = useState(false);
   
   // General Settings
+  const [selectedModel, setSelectedModel] = useState<AIModel>('gemini-flash');
   const [outputFormat, setOutputFormat] = useState<'image/jpeg' | 'image/png'>('image/jpeg');
   const [smartEnhance, setSmartEnhance] = useState(false);
   const [negativePrompt, setNegativePrompt] = useState('');
@@ -40,6 +110,9 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
   const [lighting, setLighting] = useState<LightingType>('none');
   const [cameraAngle, setCameraAngle] = useState<CameraAngle>('none');
   const [colorTone, setColorTone] = useState<ColorTone>('none');
+  const [composition, setComposition] = useState<Composition>('none');
+  const [mood, setMood] = useState<Mood>('none');
+  const [seed, setSeed] = useState<number | undefined>(undefined);
 
   // Watermark states
   const [showWatermark, setShowWatermark] = useState(false);
@@ -49,22 +122,33 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
   const [watermarkPosition, setWatermarkPosition] = useState<WatermarkPosition>('bottomRight');
   const [watermarkSize, setWatermarkSize] = useState<WatermarkSize>('medium');
 
+  // Settings UI State
+  const [activeSections, setActiveSections] = useState({
+    art: true,
+    scene: false,
+    tuning: false,
+    watermark: false
+  });
+
   // Batch Selection States
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [showVariationInput, setShowVariationInput] = useState(false);
+  const [batchVariationPrompt, setBatchVariationPrompt] = useState('');
 
-  // Image editing states
+  // --- Image Editor States ---
   const [isEditing, setIsEditing] = useState(false);
-  const [currentEditingImage, setCurrentEditingImage] = useState<GeneratedImage | null>(null);
-  const [editingSettings, setEditingSettings] = useState({
-    hueRotate: 0, // -180 to 180 degrees
-    brightness: 100, // 0 to 200%
-    contrast: 100, // 0 to 200% (for sharpness)
-  });
-  const [editedPreviewUrl, setEditedPreviewUrl] = useState<string | null>(null); // For canvas-based final preview/save
+  const [editTarget, setEditTarget] = useState<'generated' | 'reference' | 'batch'>('generated');
+  const [editingImageSrc, setEditingImageSrc] = useState<string | null>(null);
+  const [editState, setEditState] = useState<EditState>(DEFAULT_EDIT_STATE);
+  const [activeEditTab, setActiveEditTab] = useState<'adjust' | 'transform'>('transform');
+  const [isAnalyzingCrop, setIsAnalyzingCrop] = useState(false);
+  const [aiCropMessage, setAiCropMessage] = useState<string | null>(null);
   
+  // References
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // Load history from localStorage on mount
   useEffect(() => {
@@ -78,12 +162,17 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
     }
   }, []);
 
-  // Clear selection when exiting selection mode
+  // Process image updates in editor
   useEffect(() => {
-    if (!isSelectionMode) {
-      setSelectedIds(new Set());
+    if (isEditing && editingImageSrc && canvasRef.current) {
+      updateCanvasPreview();
     }
-  }, [isSelectionMode]);
+  }, [isEditing, editingImageSrc, editState]);
+
+
+  const toggleSection = (section: keyof typeof activeSections) => {
+    setActiveSections(prev => ({ ...prev, [section]: !prev[section] }));
+  };
 
   const saveToHistory = (newImage: GeneratedImage) => {
     let itemsToSave = [newImage, ...history];
@@ -125,7 +214,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
   };
 
   const handleRestore = (item: GeneratedImage) => {
-    if (isSelectionMode) return; // Don't restore if in selection mode
+    if (isSelectionMode) return;
     setGeneratedImage(item);
     setPrompt(item.prompt);
     setAspectRatio(item.aspectRatio as AspectRatio);
@@ -135,27 +224,34 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
     setWatermarkOpacity(item.watermarkOpacity || 70);
     setWatermarkPosition(item.watermarkPosition || 'bottomRight');
     setWatermarkSize(item.watermarkSize || 'medium');
-    
-    // Restore advanced settings if they exist
     if (item.lighting) setLighting(item.lighting as LightingType);
     if (item.cameraAngle) setCameraAngle(item.cameraAngle as CameraAngle);
     if (item.colorTone) setColorTone(item.colorTone as ColorTone);
+    if (item.composition) setComposition(item.composition as Composition);
+    if (item.mood) setMood(item.mood as Mood);
+    if (item.seed) setSeed(item.seed);
+    // If previous model is not in current list (e.g. imagen-3), fallback to default
+    if (item.model && (item.model === 'gemini-flash' || item.model === 'gemini-lite')) {
+        setSelectedModel(item.model as AIModel);
+    } else {
+        setSelectedModel('gemini-flash');
+    }
     
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleUseAsReference = (item: GeneratedImage) => {
-    // Construct data URL from stored base64
     const dataUrl = `data:${item.mimeType};base64,${item.base64}`;
     setReferenceImage(dataUrl);
-    setPrompt(item.prompt); // Pre-fill with the same prompt to allow editing
-    setAspectRatio(item.aspectRatio as AspectRatio); // Match aspect ratio
     
-    // Reset filters for the new reference
-    setRefFilters({ hueRotate: 0, brightness: 100, contrast: 100 });
-    setShowRefFilters(false);
-
-    // Scroll to input
+    // Akıllı Prompt Mantığı:
+    if (!prompt.trim()) {
+        setPrompt(item.prompt);
+    }
+    
+    // Referans resmin oranını korumak mantıklıdır
+    setAspectRatio(item.aspectRatio as AspectRatio);
+    
     window.scrollTo({ top: 0, behavior: 'smooth' });
     setTimeout(() => {
         textAreaRef.current?.focus();
@@ -182,7 +278,6 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
 
   const handleBatchDelete = () => {
     if (selectedIds.size === 0) return;
-    
     if (confirm(`${selectedIds.size} adet görseli silmek istediğinize emin misiniz?`)) {
         const newHistory = history.filter(item => !selectedIds.has(item.timestamp));
         setHistory(newHistory);
@@ -193,9 +288,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
 
   const handleBatchDownload = async () => {
     if (selectedIds.size === 0) return;
-    
     setIsLoading(true); 
-    
     try {
       const zip = new JSZip();
       const folder = zip.folder("tdanimator-collection");
@@ -220,7 +313,6 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
-        
         setIsSelectionMode(false);
       }
     } catch (e) {
@@ -231,20 +323,142 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
     }
   };
 
+  const handleBatchEdit = () => {
+    if (selectedIds.size === 0) return;
+    
+    // Find the first selected image to use as reference for the editor
+    const firstSelectedId = Array.from(selectedIds)[0];
+    const item = history.find(h => h.timestamp === firstSelectedId);
+    
+    if (item) {
+      const src = `data:${item.mimeType};base64,${item.base64}`;
+      setEditingImageSrc(src);
+      setEditTarget('batch');
+      setEditState(DEFAULT_EDIT_STATE);
+      setActiveEditTab('transform');
+      setIsEditing(true);
+    }
+  };
+
+  const handleBatchVariations = async () => {
+    if (selectedIds.size === 0) return;
+    if (!batchVariationPrompt.trim()) {
+      setError("Lütfen varyasyon için bir ek açıklama girin.");
+      return;
+    }
+    
+    setShowVariationInput(false);
+    setIsLoading(true);
+    setIsSelectionMode(false);
+
+    try {
+      const selectedItems = history.filter(h => selectedIds.has(h.timestamp));
+      
+      // Process sequentially to avoid rate limits and overwhelming the browser
+      for (const item of selectedItems) {
+        const newPrompt = `${item.prompt} ${batchVariationPrompt.trim()}`;
+        
+        // Using the original parameters but with modified prompt
+        // Fallback model to selectedModel if item.model is invalid (e.g. deleted models)
+        let modelToUse = selectedModel;
+        if (item.model && (item.model === 'gemini-flash' || item.model === 'gemini-lite')) {
+            modelToUse = item.model as AIModel;
+        }
+
+        await handleGenerate({
+           prompt: newPrompt,
+           aspectRatio: item.aspectRatio as AspectRatio,
+           resolution: item.resolution,
+           stylePreset: item.stylePreset,
+           lighting: item.lighting as LightingType,
+           cameraAngle: item.cameraAngle as CameraAngle,
+           colorTone: item.colorTone as ColorTone,
+           composition: item.composition as Composition,
+           mood: item.mood as Mood,
+           model: modelToUse
+        });
+        
+        // Small delay between requests
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      
+      setBatchVariationPrompt('');
+      
+    } catch (err: any) {
+      setError(err.message || "Toplu varyasyon oluşturulurken bir hata oluştu.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Prompt Enhancement Handler
+  const handleEnhancePrompt = async () => {
+    if (!prompt.trim()) return;
+    setIsEnhancingPrompt(true);
+    setShowPromptSuggestions(false);
+    try {
+      const suggestions = await enhancePrompt(prompt);
+      setPromptSuggestions(suggestions);
+      setShowPromptSuggestions(true);
+    } catch (e) {
+      console.error("Prompt enhancement failed", e);
+      // Fallback or silent fail, maybe show error toast
+    } finally {
+      setIsEnhancingPrompt(false);
+    }
+  };
+
+  // Drag and Drop Handlers
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+        if (!file.type.startsWith('image/')) {
+            setError("Lütfen sadece resim dosyası yükleyin.");
+            return;
+        }
+        if (file.size > 5 * 1024 * 1024) {
+            setError("Görsel boyutu 5MB'dan küçük olmalıdır.");
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            if (event.target?.result) {
+                setReferenceImage(event.target.result as string);
+                setError(null);
+            }
+        };
+        reader.readAsDataURL(file);
+    }
+  }, []);
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 5 * 1024 * 1024) { // 5MB limit
+      if (file.size > 5 * 1024 * 1024) {
         setError("Görsel boyutu 5MB'dan küçük olmalıdır.");
         return;
       }
-      
       const reader = new FileReader();
       reader.onload = (event) => {
         if (event.target?.result) {
           setReferenceImage(event.target.result as string);
-          setRefFilters({ hueRotate: 0, brightness: 100, contrast: 100 });
-          setShowRefFilters(false);
           setError(null);
         }
       };
@@ -254,45 +468,12 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
 
   const removeReferenceImage = () => {
     setReferenceImage(null);
-    setRefFilters({ hueRotate: 0, brightness: 100, contrast: 100 });
-    setShowRefFilters(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
   };
 
-  const processReferenceImage = useCallback(async (base64Data: string, filters: typeof refFilters): Promise<string> => {
-    if (filters.hueRotate === 0 && filters.brightness === 100 && filters.contrast === 100) {
-      return base64Data;
-    }
-
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          resolve(base64Data);
-          return;
-        }
-
-        ctx.filter = `brightness(${filters.brightness}%) hue-rotate(${filters.hueRotate}deg) contrast(${filters.contrast}%)`;
-        ctx.drawImage(img, 0, 0);
-        
-        const mimeTypeMatch = base64Data.match(/^data:(image\/\w+);base64,/);
-        const type = mimeTypeMatch ? mimeTypeMatch[1] : 'image/png';
-        
-        resolve(canvas.toDataURL(type));
-      };
-      img.onerror = (e) => reject(e);
-      img.src = base64Data;
-    });
-  }, []);
-
   const handleGenerate = useCallback(async (overrideConfig?: Partial<GeneratedImage>) => {
-    // 1. Determine effective values (use override or current state)
     const effectivePrompt = overrideConfig?.prompt ?? prompt;
     const effectiveAspectRatio = (overrideConfig?.aspectRatio as AspectRatio) ?? aspectRatio;
     const effectiveResolution = (overrideConfig?.resolution as Resolution) ?? resolution;
@@ -301,13 +482,16 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
     const effectiveLighting = overrideConfig?.lighting ?? lighting;
     const effectiveCamera = overrideConfig?.cameraAngle ?? cameraAngle;
     const effectiveColor = overrideConfig?.colorTone ?? colorTone;
+    const effectiveComposition = overrideConfig?.composition ?? composition;
+    const effectiveMood = overrideConfig?.mood ?? mood;
+    const effectiveSeed = overrideConfig?.seed ?? seed;
+    const effectiveModel = (overrideConfig?.model as AIModel) ?? selectedModel;
 
     if (!effectivePrompt.trim()) {
       setError("Lütfen oluşturmak istediğiniz görsel için bir açıklama girin.");
       return;
     }
 
-    // Update UI to match what is being generated
     if (overrideConfig) {
        setPrompt(effectivePrompt);
        setAspectRatio(effectiveAspectRatio);
@@ -316,27 +500,30 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
        setLighting(effectiveLighting as LightingType);
        setCameraAngle(effectiveCamera as CameraAngle);
        setColorTone(effectiveColor as ColorTone);
+       setComposition(effectiveComposition as Composition);
+       setMood(effectiveMood as Mood);
+       setSeed(effectiveSeed);
+       if (overrideConfig.model) setSelectedModel(overrideConfig.model as AIModel);
     }
 
     setIsLoading(true);
     setError(null);
+    setShowPromptSuggestions(false);
     
     try {
       let finalPrompt = effectivePrompt.trim();
       
-      // Add Style Modifiers
-      const selectedStyle = STYLE_PRESETS.find(s => s.value === effectiveStyle);
-      if (selectedStyle && selectedStyle.promptModifier) {
+      const selectedStylePreset = STYLE_PRESETS.find(s => s.value === effectiveStyle);
+      if (selectedStylePreset && selectedStylePreset.promptModifier) {
         if (referenceImage) {
-            finalPrompt += `. Redraw this image in ${selectedStyle.label} style. ${selectedStyle.promptModifier}`;
+            finalPrompt += `. Redraw this image in ${selectedStylePreset.label} style. ${selectedStylePreset.promptModifier}`;
         } else {
-            finalPrompt += selectedStyle.promptModifier;
+            finalPrompt += selectedStylePreset.promptModifier;
         }
       } else if (referenceImage) {
          finalPrompt += ". Use the reference image as inspiration.";
       }
 
-      // Add Advanced Settings Modifiers
       const selectedLighting = LIGHTING_TYPES.find(l => l.value === effectiveLighting);
       if (selectedLighting && selectedLighting.promptModifier) {
         finalPrompt += selectedLighting.promptModifier;
@@ -350,6 +537,16 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
       const selectedColor = COLOR_TONES.find(c => c.value === effectiveColor);
       if (selectedColor && selectedColor.promptModifier) {
         finalPrompt += selectedColor.promptModifier;
+      }
+
+      const selectedComposition = COMPOSITIONS.find(c => c.value === effectiveComposition);
+      if (selectedComposition && selectedComposition.promptModifier) {
+        finalPrompt += selectedComposition.promptModifier;
+      }
+
+      const selectedMood = MOODS.find(c => c.value === effectiveMood);
+      if (selectedMood && selectedMood.promptModifier) {
+        finalPrompt += selectedMood.promptModifier;
       }
 
       if (!referenceImage) {
@@ -368,16 +565,13 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
          finalPrompt += `. Exclude the following: ${negativePrompt.trim()}.`;
       }
 
-      let processedRefImage = referenceImage;
-      if (referenceImage) {
-        processedRefImage = await processReferenceImage(referenceImage, refFilters);
-      }
-
       const result = await generateImage(
           finalPrompt, 
           effectiveAspectRatio, 
           outputFormat,
-          processedRefImage || undefined
+          referenceImage || undefined,
+          effectiveSeed,
+          effectiveModel
       );
       
       const newImage: GeneratedImage = {
@@ -394,7 +588,11 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
         watermarkSize: watermarkSize,
         lighting: effectiveLighting,
         cameraAngle: effectiveCamera,
-        colorTone: effectiveColor
+        colorTone: effectiveColor,
+        composition: effectiveComposition,
+        mood: effectiveMood,
+        seed: effectiveSeed,
+        model: effectiveModel
       };
 
       setGeneratedImage(newImage);
@@ -405,443 +603,330 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
     } finally {
       setIsLoading(false);
     }
-  }, [prompt, aspectRatio, resolution, stylePreset, negativePrompt, history, watermarkTextEffect, watermarkOpacity, watermarkPosition, watermarkSize, outputFormat, smartEnhance, referenceImage, refFilters, processReferenceImage, lighting, cameraAngle, colorTone]);
+  }, [prompt, aspectRatio, resolution, stylePreset, negativePrompt, history, watermarkTextEffect, watermarkOpacity, watermarkPosition, watermarkSize, outputFormat, smartEnhance, referenceImage, lighting, cameraAngle, colorTone, composition, mood, seed, selectedModel]);
 
   const handleRegenerate = useCallback((item: GeneratedImage) => {
     handleGenerate(item);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [handleGenerate]);
 
-  const applyWatermark = useCallback(async (
-    imageDataUrl: string, 
-    text: string, 
-    effect: WatermarkTextEffect,
-    opacity: number,
-    position: WatermarkPosition,
-    size: WatermarkSize,
-    ): Promise<string> => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          resolve(imageDataUrl); 
-          return;
-        }
+  // ------------------------------------------------------------------
+  // EDITOR FUNCTIONS
+  // ------------------------------------------------------------------
 
-        ctx.drawImage(img, 0, 0);
+  const openEditor = (source: 'generated' | 'reference', imageItem?: GeneratedImage) => {
+    let src = '';
+    if (source === 'generated' && imageItem) {
+        src = `data:${imageItem.mimeType};base64,${imageItem.base64}`;
+    } else if (source === 'reference' && referenceImage) {
+        src = referenceImage;
+    } else {
+        return;
+    }
 
-        const mimeTypeMatch = imageDataUrl.match(/data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,/);
-        const mimeType = mimeTypeMatch ? mimeTypeMatch[1] : 'image/jpeg';
+    setEditingImageSrc(src);
+    setEditTarget(source);
+    setEditState(DEFAULT_EDIT_STATE);
+    setActiveEditTab('transform');
+    setIsEditing(true);
+    setAiCropMessage(null);
+  };
 
-        const baseFontSize = Math.max(20, img.width * 0.035);
-        let dynamicFontSize = baseFontSize;
-        switch(size) {
-            case 'small': dynamicFontSize *= 0.7; break;
-            case 'large': dynamicFontSize *= 1.3; break;
-            case 'extraLarge': dynamicFontSize *= 1.6; break;
-            case 'medium': default: break;
-        }
+  const handleAiSmartCrop = async () => {
+    if (!editingImageSrc) return;
+    setIsAnalyzingCrop(true);
+    setAiCropMessage(null);
+    try {
+      const result = await suggestSmartCrop(editingImageSrc);
+      if (result.ratio && result.ratio !== 'original') {
+        setEditState(prev => ({ ...prev, cropRatio: result.ratio as any }));
+        setAiCropMessage(`Öneri: ${result.ratio} - ${result.reason}`);
+      } else {
+        setAiCropMessage("Yapay zeka mevcut oranın en iyisi olduğunu düşünüyor.");
+      }
+    } catch (error) {
+      setAiCropMessage("Analiz sırasında bir hata oluştu.");
+    } finally {
+      setIsAnalyzingCrop(false);
+    }
+  };
+
+  const updateCanvasPreview = () => {
+    if (!canvasRef.current || !editingImageSrc) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const img = new Image();
+    img.onload = () => {
+        // 1. Calculate Dimensions based on Rotation
+        const isRotated90 = editState.rotation % 180 !== 0;
+        const canvasWidth = isRotated90 ? img.height : img.width;
+        const canvasHeight = isRotated90 ? img.width : img.height;
         
-        ctx.font = `bold ${dynamicFontSize}px sans-serif`;
-        ctx.globalAlpha = opacity / 100;
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
+
+        // 2. Apply Filters
+        ctx.filter = `brightness(${editState.brightness}%) contrast(${editState.contrast}%) saturate(${editState.saturation}%) hue-rotate(${editState.hueRotate}deg) sepia(${editState.sepia}%) blur(${editState.blur}px)`;
+
+        // 3. Transformations (Rotate & Flip)
+        ctx.save();
         
-        ctx.shadowColor = 'transparent';
-        ctx.shadowBlur = 0;
-        ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = 0;
-        ctx.lineWidth = 0;
-        ctx.lineJoin = 'miter';
+        // Move to center
+        ctx.translate(canvasWidth / 2, canvasHeight / 2);
+        
+        // Rotate
+        ctx.rotate((editState.rotation * Math.PI) / 180);
+        
+        // Flip (Scale)
+        const scaleX = editState.flipH ? -1 : 1;
+        const scaleY = editState.flipV ? -1 : 1;
+        ctx.scale(scaleX, scaleY);
 
-        const textMetrics = ctx.measureText(text);
-        const textHeight = textMetrics.actualBoundingBoxAscent + textMetrics.actualBoundingBoxDescent;
-        const padding = img.width * 0.025;
+        // Draw Image (centered around origin)
+        ctx.drawImage(img, -img.width / 2, -img.height / 2);
+        
+        ctx.restore();
+    };
+    img.src = editingImageSrc;
+  };
 
-        const drawSingleWatermark = (x: number, y: number) => {
-          switch (effect) {
-            case 'outline':
-                ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)'; 
-                ctx.lineWidth = Math.max(2, dynamicFontSize * 0.08);
-                ctx.lineJoin = 'round';
-                ctx.strokeText(text, x, y);
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-                break;
-            case 'shadow':
-                ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
-                ctx.shadowBlur = 4;
-                ctx.shadowOffsetX = 2;
-                ctx.shadowOffsetY = 2;
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-                break;
-            case 'glow':
-                ctx.shadowColor = 'rgba(255, 255, 255, 0.7)'; 
-                ctx.shadowBlur = Math.max(8, dynamicFontSize * 0.2); 
-                ctx.shadowOffsetX = 0;
-                ctx.shadowOffsetY = 0;
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-                break;
-            case 'emboss':
-                ctx.shadowColor = 'rgba(0,0,0,0.6)';
-                ctx.shadowOffsetX = Math.max(1, dynamicFontSize * 0.05);
-                ctx.shadowOffsetY = Math.max(1, dynamicFontSize * 0.05);
-                ctx.shadowBlur = 0;
-                ctx.fillStyle = 'rgba(255,255,255,0.8)';
-                ctx.fillText(text, x, y); 
-                ctx.shadowColor = 'rgba(255,255,255,0.6)';
-                ctx.shadowOffsetX = -Math.max(1, dynamicFontSize * 0.05);
-                ctx.shadowOffsetY = -Math.max(1, dynamicFontSize * 0.05);
-                ctx.shadowBlur = 0;
-                ctx.fillStyle = 'rgba(100,100,100,0.8)';
-                break;
-            case 'vintage':
-                ctx.fillStyle = 'rgba(200, 180, 150, 0.9)'; 
-                ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-                ctx.shadowBlur = 2;
-                ctx.shadowOffsetX = 1;
-                ctx.shadowOffsetY = 1;
-                break;
-            case 'neon':
-                ctx.fillStyle = 'rgba(0, 255, 255, 0.9)'; 
-                ctx.shadowColor = 'rgba(0, 255, 255, 1)';
-                ctx.shadowBlur = Math.max(10, dynamicFontSize * 0.3);
-                ctx.shadowOffsetX = 0;
-                ctx.shadowOffsetY = 0;
-                break;
-            case 'none':
-            default:
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-                ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
-                ctx.shadowBlur = 2;
-                ctx.shadowOffsetX = 1;
-                ctx.shadowOffsetY = 1;
-                break;
-          }
-          ctx.fillText(text, x, y);
-        };
+  const processImageWithEdits = (base64: string, mimeType: string): Promise<string> => {
+      return new Promise((resolve, reject) => {
+          const img = new Image();
+          img.src = `data:${mimeType};base64,${base64}`;
+          img.onload = () => {
+              const tempCanvas = document.createElement('canvas');
+              const ctx = tempCanvas.getContext('2d');
+              if(!ctx) {
+                  reject("Canvas context failure");
+                  return;
+              }
 
-        let x: number, y: number;
+              const isRotated90 = editState.rotation % 180 !== 0;
+              const canvasWidth = isRotated90 ? img.height : img.width;
+              const canvasHeight = isRotated90 ? img.width : img.height;
+              
+              tempCanvas.width = canvasWidth;
+              tempCanvas.height = canvasHeight;
 
-        if (position === 'tile') {
-          ctx.textAlign = 'left';
-          ctx.textBaseline = 'top';
-          const textWidth = textMetrics.width;
-          const rotateAngle = -25 * Math.PI / 180; 
-          ctx.translate(canvas.width / 2, canvas.height / 2);
-          ctx.rotate(rotateAngle);
-          ctx.translate(-canvas.width / 2, -canvas.height / 2);
+              ctx.filter = `brightness(${editState.brightness}%) contrast(${editState.contrast}%) saturate(${editState.saturation}%) hue-rotate(${editState.hueRotate}deg) sepia(${editState.sepia}%) blur(${editState.blur}px)`;
 
-          for (let i = -canvas.height; i < canvas.height * 2; i += textHeight * 3) {
-            for (let j = -canvas.width; j < canvas.width * 2; j += textWidth * 1.5) {
-              drawSingleWatermark(j, i);
+              ctx.save();
+              ctx.translate(canvasWidth / 2, canvasHeight / 2);
+              ctx.rotate((editState.rotation * Math.PI) / 180);
+              const scaleX = editState.flipH ? -1 : 1;
+              const scaleY = editState.flipV ? -1 : 1;
+              ctx.scale(scaleX, scaleY);
+              ctx.drawImage(img, -img.width / 2, -img.height / 2);
+              ctx.restore();
+
+              // Apply simple crop logic (center zoom)
+              if (editState.zoom > 1 || editState.cropRatio !== 'original') {
+                  const finalCanvas = document.createElement('canvas');
+                  const finalCtx = finalCanvas.getContext('2d');
+                  if (!finalCtx) {
+                     resolve(tempCanvas.toDataURL(outputFormat));
+                     return;
+                  }
+
+                  let finalWidth = tempCanvas.width;
+                  let finalHeight = tempCanvas.height;
+                  let sx = 0;
+                  let sy = 0;
+
+                  if (editState.cropRatio !== 'original') {
+                    const [rw, rh] = editState.cropRatio.split(':').map(Number);
+                    const targetRatio = rw / rh;
+                    const sourceRatio = tempCanvas.width / tempCanvas.height;
+
+                    if (sourceRatio > targetRatio) {
+                        finalHeight = tempCanvas.height;
+                        finalWidth = finalHeight * targetRatio;
+                        sx = (tempCanvas.width - finalWidth) / 2;
+                    } else {
+                        finalWidth = tempCanvas.width;
+                        finalHeight = finalWidth / targetRatio;
+                        sy = (tempCanvas.height - finalHeight) / 2;
+                    }
+                  }
+
+                  if (editState.zoom > 1) {
+                    const zoomedWidth = finalWidth / editState.zoom;
+                    const zoomedHeight = finalHeight / editState.zoom;
+                    sx += (finalWidth - zoomedWidth) / 2;
+                    sy += (finalHeight - zoomedHeight) / 2;
+                    finalWidth = zoomedWidth;
+                    finalHeight = zoomedHeight;
+                  }
+
+                  finalCanvas.width = finalWidth;
+                  finalCanvas.height = finalHeight;
+                  finalCtx.drawImage(tempCanvas, sx, sy, finalWidth, finalHeight, 0, 0, finalWidth, finalHeight);
+                  resolve(finalCanvas.toDataURL(outputFormat));
+              } else {
+                  resolve(tempCanvas.toDataURL(outputFormat));
+              }
+          };
+          img.onerror = reject;
+      });
+  };
+
+  const handleSaveEditor = async () => {
+    if (!canvasRef.current || !editingImageSrc) return;
+    
+    if (editTarget === 'batch') {
+        setIsEditing(false);
+        setIsLoading(true);
+        setIsSelectionMode(false);
+        
+        try {
+            const itemsToProcess = history.filter(h => selectedIds.has(h.timestamp));
+            const processedItems: GeneratedImage[] = [];
+
+            for (const item of itemsToProcess) {
+                try {
+                    const resultDataUrl = await processImageWithEdits(item.base64, item.mimeType);
+                    const base64Data = resultDataUrl.split(',')[1];
+                    
+                    processedItems.push({
+                        ...item,
+                        timestamp: Date.now() + Math.random(), // Unique ID
+                        base64: base64Data,
+                        mimeType: outputFormat === 'image/png' ? 'image/png' : 'image/jpeg',
+                        prompt: item.prompt + " (Edited)"
+                    });
+                } catch (e) {
+                    console.error("Batch edit failed for item", item.timestamp, e);
+                }
             }
-          }
-          ctx.setTransform(1, 0, 0, 1, 0, 0);
 
+            // Save all new items
+            const mergedHistory = [...processedItems, ...history].slice(0, MAX_HISTORY_ITEMS);
+            setHistory(mergedHistory);
+            localStorage.setItem('imagen_studio_history', JSON.stringify(mergedHistory));
+            
+            // Show first processed image
+            if (processedItems.length > 0) {
+                setGeneratedImage(processedItems[0]);
+            }
+
+        } catch (e) {
+            setError("Toplu düzenleme sırasında hata oluştu.");
+        } finally {
+            setIsLoading(false);
+        }
+        return;
+    }
+
+    const sourceCanvas = canvasRef.current;
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d');
+    if (!tempCtx) return;
+
+    // Determine Crop Dimensions
+    let finalWidth = sourceCanvas.width;
+    let finalHeight = sourceCanvas.height;
+    let sx = 0;
+    let sy = 0;
+
+    // Handle Aspect Ratio Crop
+    if (editState.cropRatio !== 'original') {
+        const [rw, rh] = editState.cropRatio.split(':').map(Number);
+        const targetRatio = rw / rh;
+        const sourceRatio = sourceCanvas.width / sourceCanvas.height;
+
+        if (sourceRatio > targetRatio) {
+            // Source is wider than target -> Crop width
+            finalHeight = sourceCanvas.height;
+            finalWidth = finalHeight * targetRatio;
+            sx = (sourceCanvas.width - finalWidth) / 2;
         } else {
-          switch (position) {
-            case 'topLeft':
-              ctx.textAlign = 'left';
-              ctx.textBaseline = 'top';
-              x = padding;
-              y = padding;
-              break;
-            case 'topRight':
-              ctx.textAlign = 'right';
-              ctx.textBaseline = 'top';
-              x = img.width - padding;
-              y = padding;
-              break;
-            case 'bottomLeft':
-              ctx.textAlign = 'left';
-              ctx.textBaseline = 'bottom';
-              x = padding;
-              y = img.height - padding;
-              break;
-            case 'center':
-              ctx.textAlign = 'center';
-              ctx.textBaseline = 'middle';
-              x = img.width / 2;
-              y = img.height / 2;
-              break;
-            case 'bottomRight':
-            default:
-              ctx.textAlign = 'right';
-              ctx.textBaseline = 'bottom';
-              x = img.width - padding;
-              y = img.height - padding;
-              break;
-          }
-          drawSingleWatermark(x, y);
+            // Source is taller than target -> Crop height
+            finalWidth = sourceCanvas.width;
+            finalHeight = finalWidth / targetRatio;
+            sy = (sourceCanvas.height - finalHeight) / 2;
         }
+    }
 
-        ctx.globalAlpha = 1; 
-        resolve(canvas.toDataURL(mimeType));
-      };
-      img.onerror = () => resolve(imageDataUrl);
-      img.src = imageDataUrl;
-    });
-  }, []);
+    // Apply Zoom (Center Crop)
+    if (editState.zoom > 1) {
+        const zoomedWidth = finalWidth / editState.zoom;
+        const zoomedHeight = finalHeight / editState.zoom;
+        sx += (finalWidth - zoomedWidth) / 2;
+        sy += (finalHeight - zoomedHeight) / 2;
+        finalWidth = zoomedWidth;
+        finalHeight = zoomedHeight;
+    }
 
-  const applyImageFilters = useCallback(async (
-    imageDataUrl: string,
-    filters: typeof editingSettings,
-    mimeType: string,
-    applyWatermarkFlag: boolean,
-    wmText: string,
-    wmEffect: WatermarkTextEffect,
-    wmOpacity: number,
-    wmPosition: WatermarkPosition,
-    wmSize: WatermarkSize,
-  ): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = async () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          return reject(new Error('Canvas context not available.'));
-        }
+    // Set final canvas size
+    tempCanvas.width = finalWidth;
+    tempCanvas.height = finalHeight;
 
-        ctx.filter = `
-          brightness(${filters.brightness}%)
-          hue-rotate(${filters.hueRotate}deg)
-          contrast(${filters.contrast}%)
-        `;
-        ctx.drawImage(img, 0, 0);
-        ctx.filter = 'none'; 
+    // Draw the cropped region from the processed preview canvas
+    tempCtx.drawImage(
+        sourceCanvas,
+        sx, sy, finalWidth, finalHeight, // Source Crop
+        0, 0, finalWidth, finalHeight    // Dest
+    );
 
-        let finalDataUrl = canvas.toDataURL(mimeType);
+    const finalDataUrl = tempCanvas.toDataURL(outputFormat);
 
-        if (applyWatermarkFlag && wmText.trim()) {
-          try {
-            finalDataUrl = await applyWatermark(finalDataUrl, wmText.trim(), wmEffect, wmOpacity, wmPosition, wmSize);
-          } catch (wmError) {
-            console.error("Filigran eklenirken hata oluştu", wmError);
-          }
-        }
-        resolve(finalDataUrl);
-      };
-      img.onerror = (e) => reject(new Error('Failed to load image: ' + e));
-      img.src = imageDataUrl;
-    });
-  }, [applyWatermark]);
+    if (editTarget === 'reference') {
+        setReferenceImage(finalDataUrl);
+        setIsEditing(false);
+    } else {
+        // For generated image, download directly
+        const ext = outputFormat === 'image/png' ? 'png' : 'jpg';
+        const link = document.createElement('a');
+        link.href = finalDataUrl;
+        link.download = `tdanimator-edited-${Date.now()}.${ext}`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setIsEditing(false);
+    }
+  };
+
+  // ------------------------------------------------------------------
+  // UTILS
+  // ------------------------------------------------------------------
 
   const handleDownload = useCallback(async (imageToDownload: GeneratedImage = generatedImage!) => {
     if (!imageToDownload) return;
-
-    let imageUrl = `data:${imageToDownload.mimeType};base64,${imageToDownload.base64}`;
-    
-    if (showWatermark && watermarkText.trim()) {
-      try {
-        imageUrl = await applyWatermark(
-          imageUrl, 
-          watermarkText.trim(), 
-          watermarkTextEffect, 
-          watermarkOpacity, 
-          watermarkPosition, 
-          watermarkSize
-        );
-      } catch (e) {
-        console.error("Filigran eklenirken hata oluştu", e);
-      }
-    }
-
-    const ext = imageToDownload.mimeType === 'image/png' ? 'png' : 'jpg';
     const link = document.createElement('a');
-    link.href = imageUrl;
-    link.download = `tdanimator-${imageToDownload.timestamp}.${ext}`;
+    link.href = `data:${imageToDownload.mimeType};base64,${imageToDownload.base64}`;
+    link.download = `tdanimator-${imageToDownload.timestamp}.${imageToDownload.mimeType === 'image/png' ? 'png' : 'jpg'}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  }, [generatedImage, showWatermark, watermarkText, watermarkTextEffect, watermarkOpacity, watermarkPosition, watermarkSize, applyWatermark]);
+  }, [generatedImage]);
 
   const handleShare = useCallback(async (imageToShare: GeneratedImage = generatedImage!) => {
     if (!imageToShare) return;
-
     try {
-      let imageUrl = `data:${imageToShare.mimeType};base64,${imageToShare.base64}`;
-      
-      if (showWatermark && watermarkText.trim()) {
-        imageUrl = await applyWatermark(
-          imageUrl, 
-          watermarkText.trim(), 
-          watermarkTextEffect,
-          watermarkOpacity, 
-          watermarkPosition, 
-          watermarkSize
-        );
-      }
-
-      const res = await fetch(imageUrl);
+      const res = await fetch(`data:${imageToShare.mimeType};base64,${imageToShare.base64}`);
       const blob = await res.blob();
       const ext = imageToShare.mimeType === 'image/png' ? 'png' : 'jpg';
       const file = new File([blob], `tdanimator-${imageToShare.timestamp}.${ext}`, { type: imageToShare.mimeType });
-
       if (navigator.share) {
         await navigator.share({
-          title: 'TdAnimator ile oluşturuldu',
-          text: `TdAnimator ile oluşturuldu: "${imageToShare.prompt}"`,
+          title: 'TdAnimator',
+          text: imageToShare.prompt,
           files: [file],
         });
-      } else {
-        alert('Cihazınız doğrudan paylaşmayı desteklemiyor.');
       }
     } catch (error) {
       console.error('Paylaşım hatası:', error);
     }
-  }, [generatedImage, showWatermark, watermarkText, watermarkTextEffect, watermarkOpacity, watermarkPosition, watermarkSize, applyWatermark]);
+  }, [generatedImage]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && e.metaKey) {
         handleGenerate();
     }
   };
-
-  const getWatermarkPreviewStyle = useCallback(() => {
-    const baseStyle: React.CSSProperties = {
-      fontSize: 'clamp(12px, 3.5vw, 32px)', 
-      textShadow: 'none', 
-      filter: 'none', 
-      color: `rgba(255, 255, 255, ${watermarkOpacity / 100})`,
-      position: 'absolute',
-      fontWeight: 'bold',
-      pointerEvents: 'none',
-      whiteSpace: 'nowrap',
-      zIndex: 10,
-    };
-
-    const padding = '2.5%';
-
-    switch (watermarkPosition) {
-        case 'topLeft':
-            baseStyle.top = padding;
-            baseStyle.left = padding;
-            baseStyle.textAlign = 'left';
-            break;
-        case 'topRight':
-            baseStyle.top = padding;
-            baseStyle.right = padding;
-            baseStyle.textAlign = 'right';
-            break;
-        case 'bottomLeft':
-            baseStyle.bottom = padding;
-            baseStyle.left = padding;
-            baseStyle.textAlign = 'left';
-            break;
-        case 'center':
-            baseStyle.top = '50%';
-            baseStyle.left = '50%';
-            baseStyle.transform = 'translate(-50%, -50%)';
-            baseStyle.textAlign = 'center';
-            break;
-        case 'bottomRight':
-        default:
-            baseStyle.bottom = padding;
-            baseStyle.right = padding;
-            baseStyle.textAlign = 'right';
-            break;
-    }
-
-    switch(watermarkSize) {
-        case 'small': baseStyle.fontSize = 'clamp(10px, 2.5vw, 24px)'; break;
-        case 'large': baseStyle.fontSize = 'clamp(16px, 4.5vw, 40px)'; break;
-        case 'extraLarge': baseStyle.fontSize = 'clamp(20px, 5.5vw, 48px)'; break;
-        case 'medium': default: break;
-    }
-
-    switch (watermarkTextEffect) {
-      case 'outline':
-        baseStyle.textShadow = '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000';
-        break;
-      case 'shadow':
-        baseStyle.textShadow = '2px 2px 4px rgba(0, 0, 0, 0.8)';
-        break;
-      case 'glow':
-        baseStyle.textShadow = '0 0 8px rgba(255, 255, 255, 0.7), 0 0 12px rgba(255, 255, 255, 0.5)';
-        break;
-      case 'emboss':
-        baseStyle.textShadow = '1px 1px 1px rgba(0,0,0,0.6), -1px -1px 1px rgba(255,255,255,0.6)';
-        baseStyle.color = `rgba(200, 200, 200, ${watermarkOpacity / 100})`;
-        break;
-      case 'vintage':
-        baseStyle.color = `rgba(200, 180, 150, ${watermarkOpacity / 100})`; 
-        baseStyle.textShadow = '1px 1px 2px rgba(0, 0, 0, 0.3)';
-        break;
-      case 'neon':
-        baseStyle.color = `rgba(0, 255, 255, ${watermarkOpacity / 100})`; 
-        baseStyle.textShadow = `0 0 10px rgba(0, 255, 255, 1), 0 0 20px rgba(0, 255, 255, 0.8)`;
-        break;
-      case 'none':
-      default:
-        baseStyle.filter = 'drop-shadow(0 2px 2px rgba(0,0,0,0.8))';
-        break;
-    }
-    return baseStyle;
-  }, [watermarkTextEffect, watermarkOpacity, watermarkPosition, watermarkSize]);
-
-  const handleOpenEditor = useCallback((imageToEdit: GeneratedImage) => {
-    setCurrentEditingImage(imageToEdit);
-    setEditingSettings({ hueRotate: 0, brightness: 100, contrast: 100 }); 
-    setEditedPreviewUrl(`data:${imageToEdit.mimeType};base64,${imageToEdit.base64}`); 
-    setIsEditing(true);
-  }, []);
-
-  const getEditorPreviewFilterStyle = useCallback(() => {
-    return {
-      filter: `brightness(${editingSettings.brightness}%) hue-rotate(${editingSettings.hueRotate}deg) contrast(${editingSettings.contrast}%)`
-    };
-  }, [editingSettings]);
-
-
-  const handleApplyEditsAndDownload = useCallback(async () => {
-    if (!currentEditingImage) return;
-
-    try {
-      const originalDataUrl = `data:${currentEditingImage.mimeType};base64,${currentEditingImage.base64}`;
-      const finalDataUrl = await applyImageFilters(
-        originalDataUrl,
-        editingSettings,
-        currentEditingImage.mimeType,
-        showWatermark,
-        watermarkText,
-        watermarkTextEffect,
-        watermarkOpacity,
-        watermarkPosition,
-        watermarkSize,
-      );
-
-      const ext = currentEditingImage.mimeType === 'image/png' ? 'png' : 'jpg';
-      const link = document.createElement('a');
-      link.href = finalDataUrl;
-      link.download = `tdanimator-edited-${currentEditingImage.timestamp}.${ext}`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      setIsEditing(false); 
-    } catch (err) {
-      console.error("Düzenlenmiş görsel indirilirken hata oluştu:", err);
-      setError("Düzenlenmiş görsel indirilemedi.");
-    }
-  }, [currentEditingImage, editingSettings, applyImageFilters, showWatermark, watermarkText, watermarkTextEffect, watermarkOpacity, watermarkPosition, watermarkSize]);
-
-  const handleResetEdits = useCallback(() => {
-    setEditingSettings({ hueRotate: 0, brightness: 100, contrast: 100 });
-  }, []);
-
-  const handleCancelEdit = useCallback(() => {
-    setIsEditing(false);
-    setCurrentEditingImage(null);
-    setEditedPreviewUrl(null);
-    setEditingSettings({ hueRotate: 0, brightness: 100, contrast: 100 });
-    setError(null); 
-  }, []);
-
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -850,11 +935,56 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
         <div className="bg-surface border border-white/10 rounded-2xl p-6 shadow-xl relative">
           
           <div className="space-y-4">
+            
+            {/* AI Model Selection */}
+            <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                    Oluşturucu Modeli
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                    {AI_MODELS.map((model) => (
+                        <button
+                            key={model.value}
+                            onClick={() => setSelectedModel(model.value)}
+                            disabled={isLoading}
+                            className={`
+                                relative p-3 rounded-xl border text-left transition-all overflow-hidden group
+                                ${selectedModel === model.value 
+                                    ? 'bg-primary/10 border-primary' 
+                                    : 'bg-darker border-white/10 hover:bg-white/5'}
+                            `}
+                        >
+                            <div className="flex items-center gap-2 mb-1">
+                                {model.icon === 'cpu' && <CpuIcon className={`w-4 h-4 ${selectedModel === model.value ? 'text-primary' : 'text-slate-400'}`} />}
+                                {model.icon === 'zap' && <ZapIcon className={`w-4 h-4 ${selectedModel === model.value ? 'text-yellow-400' : 'text-slate-400'}`} />}
+                                {model.icon === 'brain' && <BrainIcon className={`w-4 h-4 ${selectedModel === model.value ? 'text-purple-400' : 'text-slate-400'}`} />}
+                                {model.icon === 'rabbit' && <RabbitIcon className={`w-4 h-4 ${selectedModel === model.value ? 'text-green-400' : 'text-slate-400'}`} />}
+                                
+                                <span className={`text-xs font-bold ${selectedModel === model.value ? 'text-white' : 'text-slate-300'}`}>
+                                    {model.label}
+                                </span>
+                            </div>
+                            <p className="text-[10px] text-slate-500 leading-tight">
+                                {model.description}
+                            </p>
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            <hr className="border-white/5" />
+
             <div>
               <label htmlFor="prompt" className="block text-sm font-medium text-slate-300 mb-2 pr-10">
                 Görsel Açıklaması & Referans
               </label>
-              <div className="relative">
+              {/* Drag and Drop Container */}
+              <div 
+                className={`relative transition-all rounded-xl border-2 ${isDragging ? 'border-primary bg-primary/5 border-dashed' : 'border-transparent'}`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+              >
                 <textarea
                   ref={textAreaRef}
                   id="prompt"
@@ -864,15 +994,30 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                   onChange={(e) => {
                     setPrompt(e.target.value);
                     if (error) setError(null);
+                    // If typing, hide suggestions
+                    if (showPromptSuggestions) setShowPromptSuggestions(false);
                   }}
                   onKeyDown={handleKeyDown}
                   disabled={isLoading}
                 />
+
+                {/* Prompt Enhancement Button */}
+                {prompt.trim().length > 3 && !isLoading && (
+                   <button
+                     onClick={handleEnhancePrompt}
+                     disabled={isEnhancingPrompt}
+                     className="absolute bottom-3 right-3 z-10 flex items-center gap-1.5 px-2 py-1 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 text-purple-300 text-xs font-bold transition-all"
+                     title="AI ile prompt'u geliştir"
+                   >
+                      {isEnhancingPrompt ? <LoaderIcon className="w-3 h-3 animate-spin" /> : <LightbulbIcon className="w-3 h-3" />}
+                      {isEnhancingPrompt ? 'Geliştiriliyor...' : 'AI İle Geliştir'}
+                   </button>
+                )}
                 
                 {/* Reference Image Preview & Upload Button Area */}
-                <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between">
-                   {/* Upload Button */}
-                   <div className="flex items-center gap-2">
+                <div className="absolute bottom-3 left-3 flex items-center justify-between z-10 pointer-events-none">
+                   {/* Upload Button - Pointer events enabled for button */}
+                   <div className="flex items-center gap-2 pointer-events-auto">
                       <input 
                         type="file" 
                         ref={fileInputRef}
@@ -884,18 +1029,60 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                       <label 
                         htmlFor="image-upload" 
                         className="cursor-pointer flex items-center gap-2 text-slate-400 hover:text-primary transition-colors p-2 rounded-lg hover:bg-white/5"
-                        title="Referans Resim Ekle"
+                        title="Referans Resim Ekle veya Sürükleyip Bırakın"
                       >
                         <UploadCloudIcon className="w-5 h-5" />
-                        <span className="text-xs font-medium">Referans Resim</span>
+                        <span className="text-xs font-medium hidden sm:inline">Resim Yükle</span>
                       </label>
                    </div>
-
-                   {/* Character Count */}
-                   <div className="text-xs text-slate-500">
-                     {prompt.length} karakter
-                   </div>
                 </div>
+
+                {/* Drag Overlay */}
+                {isDragging && (
+                    <div className="absolute inset-0 z-20 flex items-center justify-center bg-darker/80 backdrop-blur-sm rounded-xl border-2 border-primary border-dashed pointer-events-none">
+                        <div className="text-center">
+                            <div className="w-16 h-16 bg-primary/20 rounded-full flex items-center justify-center mx-auto mb-3 animate-bounce">
+                                <UploadCloudIcon className="w-8 h-8 text-primary" />
+                            </div>
+                            <p className="text-white font-bold text-lg">Görseli Buraya Bırakın</p>
+                            <p className="text-slate-300 text-sm">Referans resim olarak ayarlanacak</p>
+                        </div>
+                    </div>
+                )}
+
+                {/* Suggestions Overlay Popover */}
+                {showPromptSuggestions && promptSuggestions.length > 0 && (
+                  <div className="absolute z-30 bottom-full left-0 right-0 mb-2 bg-surface border border-white/10 rounded-xl shadow-2xl p-3 animate-in slide-in-from-bottom-2">
+                     <div className="flex justify-between items-center mb-2 px-1">
+                        <h4 className="text-xs font-bold text-purple-300 flex items-center gap-1">
+                           <SparklesIcon className="w-3 h-3" />
+                           AI Önerileri
+                        </h4>
+                        <button onClick={() => setShowPromptSuggestions(false)} className="text-slate-400 hover:text-white">
+                           <XIcon className="w-3 h-3" />
+                        </button>
+                     </div>
+                     <div className="space-y-2">
+                        {promptSuggestions.map((sug, idx) => (
+                           <button
+                              key={idx}
+                              onClick={() => {
+                                 setPrompt(sug.text);
+                                 setShowPromptSuggestions(false);
+                              }}
+                              className="w-full text-left p-2 rounded-lg bg-darker hover:bg-white/5 border border-white/5 hover:border-purple-500/30 transition-all group"
+                           >
+                              <div className="flex justify-between items-center mb-1">
+                                 <span className="text-[10px] font-bold text-purple-400 uppercase tracking-wider">{sug.label}</span>
+                                 <span className="text-[10px] text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity">Uygula</span>
+                              </div>
+                              <p className="text-xs text-slate-300 group-hover:text-white transition-colors">{sug.text}</p>
+                           </button>
+                        ))}
+                     </div>
+                  </div>
+                )}
+
               </div>
 
               {/* Reference Image Preview Box */}
@@ -908,25 +1095,20 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                                 src={referenceImage} 
                                 alt="Referans" 
                                 className="w-full h-full object-cover"
-                                style={{
-                                  filter: `brightness(${refFilters.brightness}%) hue-rotate(${refFilters.hueRotate}deg) contrast(${refFilters.contrast}%)`
-                                }}
                               />
                           </div>
                           <div className="flex flex-col min-w-0">
                               <span className="text-xs font-medium text-white truncate">Referans Görsel</span>
-                              <span className="text-[10px] text-slate-400 truncate">
-                                {showRefFilters ? 'Filtreler Aktif' : 'Stil için kullanılacak'}
-                              </span>
+                              <span className="text-[10px] text-slate-400 truncate">Stil için kullanılacak</span>
                           </div>
                       </div>
                       <div className="flex items-center gap-1">
                         <button 
-                            onClick={() => setShowRefFilters(!showRefFilters)}
-                            className={`p-1.5 rounded-lg transition-colors ${showRefFilters ? 'text-primary bg-primary/10' : 'text-slate-400 hover:text-white hover:bg-white/10'}`}
-                            title="Görseli Düzenle"
+                            onClick={() => openEditor('reference')}
+                            className="p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                            title="Görseli Düzenle (Kırp/Döndür)"
                         >
-                            <SettingsIcon className="w-4 h-4" />
+                            <EditIcon className="w-4 h-4" />
                         </button>
                         <button 
                             onClick={removeReferenceImage}
@@ -937,63 +1119,19 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                         </button>
                       </div>
                   </div>
-
-                  {/* Inline Reference Image Filters */}
-                  {showRefFilters && (
-                     <div className="p-3 bg-darker/50 border border-white/5 rounded-xl space-y-3 animate-in fade-in zoom-in-95 duration-200">
-                        {/* Hue */}
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-[10px] text-slate-400">
-                             <span>Renk Tonu</span>
-                             <span className="text-primary">{refFilters.hueRotate}°</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="-180"
-                            max="180"
-                            value={refFilters.hueRotate}
-                            onChange={(e) => setRefFilters(prev => ({...prev, hueRotate: Number(e.target.value)}))}
-                            className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer range-sm accent-primary"
-                          />
-                        </div>
-                         {/* Brightness */}
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-[10px] text-slate-400">
-                             <span>Parlaklık</span>
-                             <span className="text-primary">{refFilters.brightness}%</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="0"
-                            max="200"
-                            value={refFilters.brightness}
-                            onChange={(e) => setRefFilters(prev => ({...prev, brightness: Number(e.target.value)}))}
-                            className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer range-sm accent-primary"
-                          />
-                        </div>
-                        {/* Contrast */}
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-[10px] text-slate-400">
-                             <span>Keskinlik/Kontrast</span>
-                             <span className="text-primary">{refFilters.contrast}%</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="0"
-                            max="200"
-                            value={refFilters.contrast}
-                            onChange={(e) => setRefFilters(prev => ({...prev, contrast: Number(e.target.value)}))}
-                            className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer range-sm accent-primary"
-                          />
-                        </div>
-                        <button 
-                          onClick={() => setRefFilters({ hueRotate: 0, brightness: 100, contrast: 100 })}
-                          className="w-full text-[10px] text-slate-500 hover:text-slate-300 py-1 border border-white/5 rounded hover:bg-white/5 transition-colors"
-                        >
-                          Filtreleri Sıfırla
-                        </button>
-                     </div>
-                  )}
+                  
+                  {/* Reference Image Tips */}
+                  <div className="mt-1 p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-xs text-blue-200 space-y-2">
+                     <h5 className="font-bold flex items-center gap-1.5">
+                        <LightbulbIcon className="w-3.5 h-3.5" />
+                        Referans Görsel İpuçları
+                     </h5>
+                     <ul className="list-disc pl-4 space-y-1 opacity-80">
+                         <li>Yapay zeka bu görselin <strong>kompozisyonunu</strong> ve <strong>renk paletini</strong> temel alır.</li>
+                         <li>Prompt alanına yazdıklarınız, bu görselin üzerine <strong>değişiklik</strong> olarak uygulanır.</li>
+                         <li>En iyi sonuç için stil ön ayarlarından birini seçerek dönüşümü yönlendirin.</li>
+                     </ul>
+                  </div>
                 </div>
               )}
 
@@ -1034,7 +1172,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                     disabled={isLoading || !!referenceImage}
                     className={`
                       p-2 text-center rounded-lg border transition-all text-xs font-medium
-                      ${!!referenceImage ? 'opacity-50 cursor-not-allowed border-transparent' : ''}
+                      ${(!!referenceImage) ? 'opacity-50 cursor-not-allowed border-transparent' : ''}
                       ${resolution === res.value 
                         ? 'bg-primary/20 border-primary text-white' 
                         : 'bg-darker border-white/10 text-slate-400 hover:border-white/20 hover:bg-white/5'}
@@ -1044,11 +1182,41 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                   </button>
                 ))}
               </div>
-               {referenceImage && (
+               {(referenceImage) && (
                   <p className="text-[10px] text-orange-400 mt-1">
-                    * Referans resim kullanıldığında çözünürlük otomatik ayarlanır.
+                    * Referans resim modunda çözünürlük otomatik ayarlanır.
                   </p>
               )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Çıktı Formatı
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setOutputFormat('image/jpeg')}
+                  className={`
+                    p-2 text-center rounded-lg border transition-all text-xs font-medium
+                    ${outputFormat === 'image/jpeg' 
+                      ? 'bg-primary/20 border-primary text-white' 
+                      : 'bg-darker border-white/10 text-slate-400 hover:border-white/20 hover:bg-white/5'}
+                  `}
+                >
+                  JPG
+                </button>
+                <button
+                  onClick={() => setOutputFormat('image/png')}
+                  className={`
+                    p-2 text-center rounded-lg border transition-all text-xs font-medium
+                    ${outputFormat === 'image/png' 
+                      ? 'bg-primary/20 border-primary text-white' 
+                      : 'bg-darker border-white/10 text-slate-400 hover:border-white/20 hover:bg-white/5'}
+                  `}
+                >
+                  PNG
+                </button>
+              </div>
             </div>
 
             <button
@@ -1089,7 +1257,6 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                 <li><strong>Referans Resim:</strong> Kendi çiziminizi veya bir fotoğrafı yükleyerek stilini değiştirebilirsiniz.</li>
                 <li>Aydınlatmayı belirtin (örn. "sinematik ışık", "gün batımı").</li>
                 <li>Sanat tarzını belirtin (örn. "yağlı boya", "3D render", "fotogerçekçi").</li>
-                <li>İstemediğiniz nesneleri "Genel Ayarlar" kısmından filtreleyebilirsiniz.</li>
             </ul>
         </div>
       </div>
@@ -1118,11 +1285,6 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                         {/* Progress Bar */}
                         <div 
                           className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-primary to-transparent bg-[length:200%_100%] animate-progress-bar-loading"
-                          role="progressbar" 
-                          aria-valuenow={0} 
-                          aria-valuemin={0} 
-                          aria-valuemax={100}
-                          aria-label="Görsel oluşturuluyor"
                         ></div>
                     </div>
                 ) : generatedImage ? (
@@ -1133,36 +1295,6 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                               alt={generatedImage.prompt}
                               className="w-full h-full object-contain rounded-lg shadow-2xl"
                           />
-                          {/* CSS-based Watermark Preview (Only for non-tiled positions) */}
-                          {showWatermark && watermarkText.trim() && watermarkPosition !== 'tile' && (
-                            <div 
-                              className="font-bold z-10 select-none"
-                              style={getWatermarkPreviewStyle()}
-                            >
-                              {watermarkText}
-                            </div>
-                          )}
-                          {/* CSS-based Watermark Preview (Tiled position, approximated) */}
-                          {showWatermark && watermarkText.trim() && watermarkPosition === 'tile' && (
-                            <div className="absolute inset-0 z-10 overflow-hidden opacity-50">
-                                <div 
-                                    className="absolute w-[200%] h-[200%] top-[-50%] left-[-50%] rotate-[-25deg] flex flex-wrap justify-around items-center"
-                                    style={{
-                                        opacity: watermarkOpacity / 100,
-                                        fontSize: getWatermarkPreviewStyle().fontSize,
-                                        color: getWatermarkPreviewStyle().color,
-                                        textShadow: getWatermarkPreviewStyle().textShadow,
-                                        filter: getWatermarkPreviewStyle().filter,
-                                    }}
-                                >
-                                    {Array.from({ length: 50 }).map((_, i) => ( 
-                                        <span key={i} className="p-4" style={{ whiteSpace: 'nowrap' }}>
-                                            {watermarkText}
-                                        </span>
-                                    ))}
-                                </div>
-                            </div>
-                          )}
                         </div>
                         
                         <div className="absolute inset-0 flex items-end justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 p-6 bg-gradient-to-t from-black/80 via-transparent to-transparent rounded-lg">
@@ -1176,7 +1308,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                                   Referans Al
                               </button>
                               <button 
-                                  onClick={() => handleOpenEditor(generatedImage)}
+                                  onClick={() => openEditor('generated', generatedImage)}
                                   className="flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 text-white font-bold py-3 px-6 rounded-full hover:bg-white/20 transition-colors shadow-lg"
                               >
                                   <EditIcon className="w-5 h-5" />
@@ -1215,7 +1347,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
 
         {/* History Section */}
         {history.length > 0 && (
-          <div className="bg-surface border border-white/10 rounded-2xl p-6">
+          <div className="bg-surface border border-white/10 rounded-2xl p-6 relative">
             <div className="flex flex-wrap items-center justify-between mb-4 gap-4">
               <div className="flex items-center gap-2 text-slate-200">
                 <HistoryIcon className="w-5 h-5 text-primary" />
@@ -1225,20 +1357,24 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
               <div className="flex items-center gap-2">
                 {isSelectionMode ? (
                   <>
-                     <button 
-                      onClick={() => setIsSelectionMode(false)}
-                      className="text-xs text-slate-400 hover:text-slate-200 px-3 py-1.5 rounded-lg border border-white/10 hover:bg-white/5 transition-colors"
-                    >
-                      Vazgeç
-                    </button>
-                    <button 
-                      onClick={handleSelectAll}
-                      className="text-xs text-slate-300 hover:text-white px-3 py-1.5 rounded-lg border border-white/10 hover:bg-white/5 transition-colors"
-                    >
-                      {selectedIds.size === history.length ? 'Seçimi Kaldır' : 'Tümünü Seç'}
-                    </button>
-                    {selectedIds.size > 0 && (
+                     {selectedIds.size > 0 && (
                         <>
+                             <button 
+                                onClick={handleBatchEdit}
+                                className="text-xs text-white bg-blue-600 flex items-center gap-1 px-3 py-1.5 rounded-lg hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
+                                title="Seçilenleri Toplu Düzenle"
+                            >
+                                <CopyIcon className="w-3.5 h-3.5" />
+                                Toplu Düzenle
+                            </button>
+                             <button 
+                                onClick={() => setShowVariationInput(true)}
+                                className="text-xs text-white bg-purple-600 flex items-center gap-1 px-3 py-1.5 rounded-lg hover:bg-purple-700 transition-colors shadow-lg shadow-purple-600/20"
+                                title="Seçilenlerden Varyasyon Üret"
+                            >
+                                <ZapIcon className="w-3.5 h-3.5" />
+                                Toplu Varyasyon
+                            </button>
                              <button 
                                 onClick={handleBatchDelete}
                                 className="text-xs text-red-400 hover:text-red-300 bg-red-500/10 flex items-center gap-1 px-3 py-1.5 rounded-lg hover:bg-red-500/20 transition-colors"
@@ -1255,6 +1391,22 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                             </button>
                         </>
                     )}
+                    <div className="h-6 w-px bg-white/10 mx-1"></div>
+                    <button 
+                      onClick={handleSelectAll}
+                      className="text-xs text-slate-300 hover:text-white px-3 py-1.5 rounded-lg border border-white/10 hover:bg-white/5 transition-colors"
+                    >
+                      {selectedIds.size === history.length ? 'Seçimi Kaldır' : 'Tümünü Seç'}
+                    </button>
+                     <button 
+                      onClick={() => {
+                          setIsSelectionMode(false);
+                          setSelectedIds(new Set());
+                      }}
+                      className="text-xs text-slate-400 hover:text-slate-200 px-3 py-1.5 rounded-lg border border-white/10 hover:bg-white/5 transition-colors"
+                    >
+                      İptal
+                    </button>
                   </>
                 ) : (
                   <>
@@ -1263,7 +1415,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                         className="text-xs text-slate-400 hover:text-primary flex items-center gap-1 px-3 py-1.5 rounded-lg border border-white/5 hover:bg-white/5 transition-colors"
                       >
                         <CheckSquareIcon className="w-3.5 h-3.5" />
-                        Seç
+                        Seç / Toplu İşlem
                       </button>
                       <button 
                         onClick={clearHistory}
@@ -1277,6 +1429,41 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
               </div>
             </div>
             
+            {/* Batch Variation Input Modal */}
+            {showVariationInput && (
+                <div className="absolute top-20 left-0 right-0 z-50 mx-6 p-4 bg-darker/95 backdrop-blur-md border border-white/20 rounded-xl shadow-2xl animate-in slide-in-from-top-5">
+                    <h4 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
+                        <ZapIcon className="w-4 h-4 text-purple-500" />
+                        Toplu Varyasyon Oluştur
+                    </h4>
+                    <p className="text-xs text-slate-400 mb-3">
+                        Seçilen {selectedIds.size} görselin promptlarına aşağıdaki metin eklenecek ve yeniden oluşturulacaktır.
+                    </p>
+                    <div className="flex gap-2">
+                        <input 
+                            type="text" 
+                            value={batchVariationPrompt}
+                            onChange={(e) => setBatchVariationPrompt(e.target.value)}
+                            placeholder="Örn: karlı bir günde, neon ışıklar altında..."
+                            className="flex-1 bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-purple-500"
+                            autoFocus
+                        />
+                        <button 
+                            onClick={handleBatchVariations}
+                            className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors"
+                        >
+                            Oluştur
+                        </button>
+                         <button 
+                            onClick={() => setShowVariationInput(false)}
+                            className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors"
+                        >
+                            İptal
+                        </button>
+                    </div>
+                </div>
+            )}
+
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
               {history.map((item) => {
                 const isSelected = selectedIds.has(item.timestamp);
@@ -1311,16 +1498,28 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                             </div>
                         )}
 
+                        {/* Model Badge */}
+                        {!isSelectionMode && item.model === 'gemini-flash' && (
+                           <div className="absolute top-2 left-2 bg-yellow-500/20 text-yellow-200 text-[8px] px-1.5 py-0.5 rounded border border-yellow-500/30 backdrop-blur-sm font-bold">
+                              FLASH
+                           </div>
+                        )}
+                         {!isSelectionMode && item.model === 'gemini-lite' && (
+                           <div className="absolute top-2 left-2 bg-green-500/20 text-green-200 text-[8px] px-1.5 py-0.5 rounded border border-green-500/30 backdrop-blur-sm font-bold">
+                              LITE
+                           </div>
+                        )}
+
                         {/* Action Buttons (Only when not in selection mode) */}
                         {!isSelectionMode && (
-                            <div className="absolute top-2 left-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity flex justify-between">
+                            <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/90 via-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex justify-center gap-2">
                                 <div
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         handleRegenerate(item);
                                     }}
-                                    className="p-1.5 bg-black/50 hover:bg-primary text-white rounded-lg backdrop-blur-sm transition-colors cursor-pointer"
-                                    title="Bu ayarlarla tekrar oluştur"
+                                    className="p-2 bg-white/10 hover:bg-primary text-white rounded-lg backdrop-blur-sm transition-colors cursor-pointer flex items-center justify-center"
+                                    title="Tekrarla"
                                 >
                                     <RefreshCwIcon className="w-4 h-4" />
                                 </div>
@@ -1329,21 +1528,14 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                                         e.stopPropagation();
                                         handleUseAsReference(item);
                                     }}
-                                    className="p-1.5 bg-black/50 hover:bg-primary text-white rounded-lg backdrop-blur-sm transition-colors cursor-pointer"
-                                    title="Referans alarak yeni varyasyon üret"
+                                    className="px-3 py-1 bg-white/10 hover:bg-primary text-white rounded-lg backdrop-blur-sm transition-colors cursor-pointer flex items-center gap-1"
+                                    title="Referans Al"
                                 >
-                                    <LayersIcon className="w-4 h-4" />
+                                    <LayersIcon className="w-3.5 h-3.5" />
+                                    <span className="text-[10px] font-bold">Ref</span>
                                 </div>
                             </div>
                         )}
-
-                        <div className={`absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent transition-opacity p-3 flex flex-col justify-end ${isSelectionMode ? (isSelected ? 'opacity-40' : 'opacity-0') : 'opacity-0 group-hover:opacity-100'}`}>
-                            {!isSelectionMode && (
-                                <p className="text-white text-[10px] line-clamp-3 font-medium leading-tight">
-                                {item.prompt}
-                                </p>
-                            )}
-                        </div>
                     </button>
                 );
               })}
@@ -1370,381 +1562,296 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
               </button>
             </div>
 
-            <div className="space-y-8">
-                {/* Section 0: Style Presets */}
-                <div className="space-y-3">
-                    <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Stil Şablonu</h3>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        {STYLE_PRESETS.map((style) => (
-                            <button
-                                key={style.value}
-                                onClick={() => setStylePreset(style.value)}
-                                className={`p-2 text-xs rounded-lg border transition-all text-left ${stylePreset === style.value ? 'bg-primary/20 border-primary text-white' : 'bg-darker border-white/10 text-slate-400 hover:bg-white/5'}`}
-                            >
-                                {style.label}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-
-                <hr className="border-white/5" />
-
-                {/* New Advanced Settings Sections */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {/* Lighting */}
-                    <div className="space-y-3">
-                         <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Aydınlatma</h3>
-                         <div className="grid grid-cols-1 gap-1.5">
-                            {LIGHTING_TYPES.map((l) => (
-                                <button
-                                    key={l.value}
-                                    onClick={() => setLighting(l.value)}
-                                    className={`p-2 text-xs rounded-lg border transition-all text-left ${lighting === l.value ? 'bg-primary/20 border-primary text-white' : 'bg-darker border-white/10 text-slate-400 hover:bg-white/5'}`}
-                                >
-                                    {l.label}
+            <div className="space-y-4">
+                {/* Group 1: Aesthetics & Style */}
+                <CollapsibleSection title="Sanat & Atmosfer" icon={<BrushIcon className="w-5 h-5" />} isOpen={activeSections.art} onToggle={() => toggleSection('art')}>
+                    <div className="space-y-6">
+                        {/* Style Presets */}
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                            {STYLE_PRESETS.map((style) => (
+                                <button key={style.value} onClick={() => setStylePreset(style.value)} className={`p-2 text-xs rounded-lg border transition-all text-left ${stylePreset === style.value ? 'bg-primary/20 border-primary text-white' : 'bg-darker border-white/10 text-slate-400 hover:bg-white/5'}`}>
+                                    {style.label}
                                 </button>
                             ))}
-                         </div>
-                    </div>
-
-                    {/* Camera Angle */}
-                    <div className="space-y-3">
-                         <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Kamera Açısı</h3>
-                         <div className="grid grid-cols-1 gap-1.5">
-                            {CAMERA_ANGLES.map((c) => (
-                                <button
-                                    key={c.value}
-                                    onClick={() => setCameraAngle(c.value)}
-                                    className={`p-2 text-xs rounded-lg border transition-all text-left ${cameraAngle === c.value ? 'bg-primary/20 border-primary text-white' : 'bg-darker border-white/10 text-slate-400 hover:bg-white/5'}`}
-                                >
-                                    {c.label}
-                                </button>
-                            ))}
-                         </div>
-                    </div>
-
-                    {/* Color Tone */}
-                    <div className="space-y-3">
-                         <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Renk Tonu</h3>
-                         <div className="grid grid-cols-1 gap-1.5">
-                            {COLOR_TONES.map((c) => (
-                                <button
-                                    key={c.value}
-                                    onClick={() => setColorTone(c.value)}
-                                    className={`p-2 text-xs rounded-lg border transition-all text-left ${colorTone === c.value ? 'bg-primary/20 border-primary text-white' : 'bg-darker border-white/10 text-slate-400 hover:bg-white/5'}`}
-                                >
-                                    {c.label}
-                                </button>
-                            ))}
-                         </div>
-                    </div>
-                </div>
-
-                <hr className="border-white/5" />
-
-                {/* Section 1: Format & Enhance */}
-                <div className="space-y-4">
-                    <div className="space-y-3">
-                        <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Çıktı Formatı</h3>
-                        <div className="grid grid-cols-2 gap-3">
-                            <button 
-                                onClick={() => setOutputFormat('image/jpeg')}
-                                className={`p-3 rounded-xl border text-sm font-medium transition-all flex items-center justify-center gap-2 ${outputFormat === 'image/jpeg' ? 'bg-primary/20 border-primary text-white' : 'bg-darker border-white/10 text-slate-400 hover:border-white/20'}`}
-                            >
-                                JPG
-                            </button>
-                            <button 
-                                onClick={() => setOutputFormat('image/png')}
-                                className={`p-3 rounded-xl border text-sm font-medium transition-all flex items-center justify-center gap-2 ${outputFormat === 'image/png' ? 'bg-primary/20 border-primary text-white' : 'bg-darker border-white/10 text-slate-400 hover:border-white/20'}`}
-                            >
-                                PNG
-                            </button>
+                        </div>
+                        
+                        {/* Moods & Color Tones */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-white/5">
+                             <div className="space-y-3">
+                                 <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Ruh Hali (Mood)</h3>
+                                 <div className="grid grid-cols-1 gap-1.5">{MOODS.map((m) => (<button key={m.value} onClick={() => setMood(m.value)} className={`p-2 text-xs rounded-lg border transition-all text-left ${mood === m.value ? 'bg-primary/20 border-primary text-white' : 'bg-darker border-white/10 text-slate-400 hover:bg-white/5'}`}>{m.label}</button>))}</div>
+                            </div>
+                            <div className="space-y-3">
+                                 <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Renk Tonu</h3>
+                                 <div className="grid grid-cols-1 gap-1.5">{COLOR_TONES.map((c) => (<button key={c.value} onClick={() => setColorTone(c.value)} className={`p-2 text-xs rounded-lg border transition-all text-left ${colorTone === c.value ? 'bg-primary/20 border-primary text-white' : 'bg-darker border-white/10 text-slate-400 hover:bg-white/5'}`}>{c.label}</button>))}</div>
+                            </div>
                         </div>
                     </div>
+                </CollapsibleSection>
 
-                    <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                            <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Akıllı Geliştirme</h3>
-                            <label className="relative inline-flex items-center cursor-pointer">
+                {/* Group 2: Composition & Scene */}
+                <CollapsibleSection title="Kompozisyon & Sahne" icon={<LayersIcon className="w-5 h-5" />} isOpen={activeSections.scene} onToggle={() => toggleSection('scene')}>
+                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div className="space-y-3">
+                             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Kompozisyon</h3>
+                             <div className="grid grid-cols-1 gap-1.5">{COMPOSITIONS.map((c) => (<button key={c.value} onClick={() => setComposition(c.value)} className={`p-2 text-xs rounded-lg border transition-all text-left ${composition === c.value ? 'bg-primary/20 border-primary text-white' : 'bg-darker border-white/10 text-slate-400 hover:bg-white/5'}`}>{c.label}</button>))}</div>
+                        </div>
+                        <div className="space-y-3">
+                             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Kamera Açısı</h3>
+                             <div className="grid grid-cols-1 gap-1.5">{CAMERA_ANGLES.map((c) => (<button key={c.value} onClick={() => setCameraAngle(c.value)} className={`p-2 text-xs rounded-lg border transition-all text-left ${cameraAngle === c.value ? 'bg-primary/20 border-primary text-white' : 'bg-darker border-white/10 text-slate-400 hover:bg-white/5'}`}>{c.label}</button>))}</div>
+                        </div>
+                         <div className="space-y-3">
+                             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Aydınlatma</h3>
+                             <div className="grid grid-cols-1 gap-1.5">{LIGHTING_TYPES.map((l) => (<button key={l.value} onClick={() => setLighting(l.value)} className={`p-2 text-xs rounded-lg border transition-all text-left ${lighting === l.value ? 'bg-primary/20 border-primary text-white' : 'bg-darker border-white/10 text-slate-400 hover:bg-white/5'}`}>{l.label}</button>))}</div>
+                        </div>
+                    </div>
+                </CollapsibleSection>
+                
+                {/* Group 3: Fine Tuning / Controls */}
+                <CollapsibleSection title="İnce Ayarlar & Kontroller" icon={<SlidersIcon className="w-5 h-5" />} isOpen={activeSections.tuning} onToggle={() => toggleSection('tuning')}>
+                    <div className="space-y-6">
+                         {/* Smart Enhance */}
+                         <div className="flex items-center justify-between"><h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Akıllı Geliştirme</h3><label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" checked={smartEnhance} onChange={(e) => setSmartEnhance(e.target.checked)} className="sr-only peer"/><div className="w-9 h-5 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div></label></div>
+                         
+                         {/* Negative Prompt */}
+                         <div className="space-y-3"><h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Negatif Prompt</h3><textarea value={negativePrompt} onChange={(e) => setNegativePrompt(e.target.value)} className="w-full bg-darker border border-white/10 rounded-lg p-3 text-sm text-white placeholder-slate-500 focus:ring-1 focus:ring-primary outline-none resize-none h-20" placeholder="Neleri hariç tutmak istersiniz?"/></div>
+                         
+                         {/* Seed */}
+                         <div className="pt-4 border-t border-white/5">
+                            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Seed (Tohum)</h3>
+                            <div className="flex gap-2">
                                 <input 
-                                    type="checkbox" 
-                                    checked={smartEnhance} 
-                                    onChange={(e) => setSmartEnhance(e.target.checked)} 
-                                    className="sr-only peer"
+                                    type="number" 
+                                    placeholder="Rastgele" 
+                                    value={seed === undefined ? '' : seed} 
+                                    onChange={(e) => setSeed(e.target.value ? parseInt(e.target.value) : undefined)} 
+                                    className="w-full bg-darker border border-white/10 rounded-lg p-2 text-sm text-white placeholder-slate-500 focus:ring-1 focus:ring-primary outline-none"
                                 />
-                                <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
-                            </label>
+                                <button 
+                                    onClick={() => setSeed(Math.floor(Math.random() * 1000000))}
+                                    className="bg-white/5 hover:bg-white/10 text-slate-300 px-3 rounded-lg border border-white/10 transition-colors text-xs"
+                                    title="Rastgele Seed Üret"
+                                >
+                                    <RefreshCwIcon className="w-4 h-4" />
+                                </button>
+                                 <button 
+                                    onClick={() => setSeed(undefined)}
+                                    className="bg-white/5 hover:bg-white/10 text-slate-300 px-3 rounded-lg border border-white/10 transition-colors text-xs"
+                                    title="Sıfırla"
+                                >
+                                    <XIcon className="w-4 h-4" />
+                                </button>
+                            </div>
+                            <p className="text-[10px] text-slate-500 mt-1">Aynı seed değeri ve aynı prompt ile benzer görseller üretebilirsiniz.</p>
                         </div>
-                        <p className="text-xs text-slate-400">
-                            Otomatik olarak "8k, high quality, highly detailed" gibi anahtar kelimeler ekleyerek görsel kalitesini artırır.
-                        </p>
                     </div>
-                </div>
-
-                <hr className="border-white/5" />
-
-                {/* Section 2: Negative Prompt */}
-                <div className="space-y-3">
-                    <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Negatif Prompt (İstenmeyenler)</h3>
-                    <p className="text-xs text-slate-400 mb-2">Görselde olmamasını istediğiniz şeyleri yazın (örn. "bulanık, düşük kalite, insan").</p>
-                    <textarea
-                        value={negativePrompt}
-                        onChange={(e) => setNegativePrompt(e.target.value)}
-                        className="w-full bg-darker border border-white/10 rounded-lg p-3 text-sm text-white placeholder-slate-500 focus:ring-1 focus:ring-primary outline-none resize-none h-20"
-                        placeholder="Neleri hariç tutmak istersiniz?"
-                    />
-                </div>
-
-                <hr className="border-white/5" />
-
-                {/* Section 3: Watermark */}
-                <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                        <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
-                             <StampIcon className="w-4 h-4 text-primary" />
-                             Filigran
-                        </h3>
-                        <label className="relative inline-flex items-center cursor-pointer">
-                        <input 
-                            type="checkbox" 
-                            checked={showWatermark} 
-                            onChange={(e) => setShowWatermark(e.target.checked)} 
-                            className="sr-only peer"
-                        />
-                        <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
-                        </label>
-                    </div>
-
-                    {showWatermark && (
-                        <div className="space-y-4 p-4 bg-darker/50 rounded-xl border border-white/5 animate-in slide-in-from-top-2">
-                            {/* Text */}
-                            <div>
-                                <label className="block text-xs font-medium text-slate-400 mb-1">Filigran Metni</label>
-                                <input
-                                    type="text"
-                                    value={watermarkText}
-                                    onChange={(e) => setWatermarkText(e.target.value)}
-                                    placeholder="Filigran metnini girin"
-                                    aria-label="Filigran metni"
-                                    className="w-full bg-darker border border-white/10 rounded-lg p-2.5 text-sm text-white placeholder-slate-500 focus:ring-1 focus:ring-primary outline-none"
-                                    maxLength={30}
-                                />
+                </CollapsibleSection>
+                
+                {/* Group 4: Watermark */}
+                <CollapsibleSection title="Filigran" icon={<StampIcon className="w-5 h-5" />} isOpen={activeSections.watermark} onToggle={() => toggleSection('watermark')}>
+                   <div className="space-y-4">
+                        <div className="flex items-center justify-between mb-4"><span className="text-sm text-slate-300">Filigran Ekle</span><label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" checked={showWatermark} onChange={(e) => setShowWatermark(e.target.checked)} className="sr-only peer"/><div className="w-9 h-5 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div></label></div>
+                        {showWatermark && (
+                            <div className="space-y-4 animate-in slide-in-from-top-2">
+                                <div><label className="block text-xs font-medium text-slate-400 mb-1">Filigran Metni</label><input type="text" value={watermarkText} onChange={(e) => setWatermarkText(e.target.value)} className="w-full bg-darker border border-white/10 rounded-lg p-2.5 text-sm text-white outline-none" maxLength={30}/></div>
+                                <div><label className="block text-xs font-medium text-slate-400">Saydamlık</label><input type="range" min="0" max="100" value={watermarkOpacity} onChange={(e) => setWatermarkOpacity(Number(e.target.value))} className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer range-sm accent-primary"/></div>
                             </div>
-
-                            {/* Opacity */}
-                            <div className="space-y-2">
-                                <label htmlFor="wmOpacity" className="block text-xs font-medium text-slate-400">
-                                    Saydamlık: <span className="text-primary">{watermarkOpacity}%</span>
-                                </label>
-                                <input
-                                    id="wmOpacity"
-                                    type="range"
-                                    min="0"
-                                    max="100"
-                                    value={watermarkOpacity}
-                                    onChange={(e) => setWatermarkOpacity(Number(e.target.value))}
-                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer range-sm accent-primary"
-                                />
-                            </div>
-
-                            {/* Position */}
-                            <div>
-                                <label className="block text-xs font-medium text-slate-400 mb-1">Konum</label>
-                                <div className="grid grid-cols-3 gap-2">
-                                {WATERMARK_POSITIONS.map((pos) => (
-                                    <button
-                                    key={pos.value}
-                                    onClick={() => setWatermarkPosition(pos.value)}
-                                    className={`
-                                        p-2 rounded-lg border text-xs transition-all
-                                        ${watermarkPosition === pos.value 
-                                        ? 'bg-primary/20 border-primary text-white' 
-                                        : 'bg-darker border-white/10 text-slate-400 hover:border-white/20 hover:bg-white/5'}
-                                    `}
-                                    >
-                                    {pos.label}
-                                    </button>
-                                ))}
-                                </div>
-                            </div>
-
-                            {/* Size */}
-                            <div>
-                                <label className="block text-xs font-medium text-slate-400 mb-1">Boyut</label>
-                                <div className="grid grid-cols-4 gap-2">
-                                {WATERMARK_SIZES.map((size) => (
-                                    <button
-                                    key={size.value}
-                                    onClick={() => setWatermarkSize(size.value)}
-                                    className={`
-                                        p-2 rounded-lg border text-xs transition-all
-                                        ${watermarkSize === size.value 
-                                        ? 'bg-primary/20 border-primary text-white' 
-                                        : 'bg-darker border-white/10 text-slate-400 hover:border-white/20 hover:bg-white/5'}
-                                    `}
-                                    >
-                                    {size.label}
-                                    </button>
-                                ))}
-                                </div>
-                            </div>
-
-                            {/* Effects */}
-                            <div>
-                                <label className="block text-xs font-medium text-slate-400 mb-1">Efekt</label>
-                                <div className="grid grid-cols-2 gap-2">
-                                {WATERMARK_EFFECTS.map((effect) => (
-                                    <button
-                                    key={effect.value}
-                                    onClick={() => setWatermarkTextEffect(effect.value)}
-                                    className={`
-                                        p-2 rounded-lg border text-xs transition-all
-                                        ${watermarkTextEffect === effect.value 
-                                        ? 'bg-primary/20 border-primary text-white' 
-                                        : 'bg-darker border-white/10 text-slate-400 hover:border-white/20 hover:bg-white/5'}
-                                    `}
-                                    >
-                                    {effect.label}
-                                    </button>
-                                ))}
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                </div>
+                        )}
+                   </div>
+                </CollapsibleSection>
             </div>
             
             <div className="mt-8 pt-4 border-t border-white/10">
-                <button 
-                    onClick={onSettingsClose}
-                    className="w-full bg-primary hover:bg-primaryHover text-white font-bold py-3 px-6 rounded-xl transition-all"
-                >
-                    Kaydet ve Kapat
-                </button>
+                <button onClick={onSettingsClose} className="w-full bg-primary hover:bg-primaryHover text-white font-bold py-3 px-6 rounded-xl transition-all">Kaydet ve Kapat</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Image Editing Modal (Existing Code) */}
-      {isEditing && currentEditingImage && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm"></div>
-          <div className="relative w-full max-w-5xl h-[90vh] bg-surface border border-white/10 rounded-2xl p-8 shadow-2xl transform transition-all animate-in fade-in zoom-in duration-300 flex flex-col">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-white flex items-center gap-3">
-                <EditIcon className="w-6 h-6 text-primary" />
-                Görseli Düzenle
-              </h2>
-              <button 
-                onClick={handleCancelEdit}
-                className="text-slate-400 hover:text-white hover:bg-white/10 rounded-lg p-2 transition-colors"
-                aria-label="Düzenlemeyi İptal Et"
-              >
-                <XIcon className="w-6 h-6" />
-              </button>
-            </div>
+      {/* ADVANCED IMAGE EDITOR MODAL */}
+      {isEditing && editingImageSrc && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+          <div className="w-full max-w-6xl h-[90vh] bg-darker border border-white/10 rounded-3xl shadow-2xl overflow-hidden flex flex-col">
+             
+             {/* Header */}
+             <div className="flex items-center justify-between p-6 border-b border-white/10 bg-surface/50">
+                <div className="flex items-center gap-3">
+                   <EditIcon className="w-6 h-6 text-primary" />
+                   <h2 className="text-xl font-bold text-white">
+                     {editTarget === 'generated' ? 'Görsel Düzenleyici' : 
+                      editTarget === 'reference' ? 'Referans Görseli Düzenle' : 'Toplu Düzenleme Modu'}
+                   </h2>
+                   {editTarget === 'batch' && (
+                       <span className="bg-blue-500/20 text-blue-300 text-xs px-2 py-1 rounded-full border border-blue-500/30">
+                           {selectedIds.size} görsel seçildi
+                       </span>
+                   )}
+                </div>
+                <div className="flex items-center gap-3">
+                    <button onClick={() => setEditState(DEFAULT_EDIT_STATE)} className="text-sm text-slate-400 hover:text-white px-4 py-2 hover:bg-white/5 rounded-lg transition-colors">
+                        Sıfırla
+                    </button>
+                    <button onClick={() => setIsEditing(false)} className="p-2 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-colors">
+                        <XIcon className="w-6 h-6" />
+                    </button>
+                </div>
+             </div>
 
-            <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-6 overflow-hidden">
-              {/* Image Preview */}
-              <div className="lg:col-span-2 flex items-center justify-center bg-darker rounded-xl overflow-hidden p-4 relative">
-                {editedPreviewUrl ? (
-                  <img 
-                    src={editedPreviewUrl}
-                    alt="Düzenlenen Görsel Önizlemesi"
-                    className="max-w-full max-h-full object-contain rounded-lg shadow-xl"
-                    style={getEditorPreviewFilterStyle()}
-                  />
-                ) : (
-                  <LoaderIcon className="w-12 h-12 animate-spin text-primary" />
-                )}
-              </div>
+             <div className="flex-1 flex overflow-hidden">
+                {/* Left Panel: Tools */}
+                <div className="w-80 bg-surface/30 border-r border-white/10 flex flex-col overflow-y-auto custom-scrollbar">
+                   {/* Tab Switcher */}
+                   <div className="p-4 grid grid-cols-2 gap-2">
+                      <button 
+                        onClick={() => setActiveEditTab('transform')}
+                        className={`py-2 px-4 rounded-lg text-sm font-medium transition-all ${activeEditTab === 'transform' ? 'bg-primary text-white shadow-lg shadow-primary/25' : 'text-slate-400 hover:bg-white/5'}`}
+                      >
+                        Dönüştür
+                      </button>
+                      <button 
+                        onClick={() => setActiveEditTab('adjust')}
+                        className={`py-2 px-4 rounded-lg text-sm font-medium transition-all ${activeEditTab === 'adjust' ? 'bg-primary text-white shadow-lg shadow-primary/25' : 'text-slate-400 hover:bg-white/5'}`}
+                      >
+                        Ayarlar
+                      </button>
+                   </div>
 
-              {/* Controls */}
-              <div className="lg:col-span-1 flex flex-col gap-6">
-                {/* Renk Tonu */}
-                <div className="space-y-2">
-                  <label htmlFor="hueRotate" className="block text-sm font-medium text-slate-300">
-                    Renk Tonu: <span className="text-primary">{editingSettings.hueRotate}°</span>
-                  </label>
-                  <input
-                    id="hueRotate"
-                    type="range"
-                    min="-180"
-                    max="180"
-                    value={editingSettings.hueRotate}
-                    onChange={(e) => setEditingSettings(prev => ({ ...prev, hueRotate: Number(e.target.value) }))}
-                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer range-sm accent-primary"
-                    aria-label="Görselin renk tonunu ayarla"
-                  />
+                   <div className="p-6 space-y-8">
+                      {activeEditTab === 'transform' && (
+                        <>
+                            {/* AI Smart Crop */}
+                            <div className="space-y-4">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                                    <SparklesIcon className="w-4 h-4" /> Akıllı Kırpma
+                                </h3>
+                                <button
+                                  onClick={handleAiSmartCrop}
+                                  disabled={isAnalyzingCrop}
+                                  className="w-full p-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl flex items-center justify-center gap-2 text-sm font-bold shadow-lg shadow-indigo-900/20 transition-all"
+                                >
+                                  {isAnalyzingCrop ? <LoaderIcon className="w-4 h-4 animate-spin" /> : <ScanEyeIcon className="w-4 h-4" />}
+                                  {isAnalyzingCrop ? 'Analiz Ediliyor...' : 'AI En İyi Oranı Bul'}
+                                </button>
+                                {aiCropMessage && (
+                                  <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg text-xs text-blue-200 animate-in fade-in slide-in-from-top-2">
+                                    {aiCropMessage}
+                                  </div>
+                                )}
+                            </div>
+
+                            <div className="h-px bg-white/10 w-full my-4"></div>
+
+                            {/* Rotation & Flip */}
+                            <div className="space-y-4">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                                    <RotateCwIcon className="w-4 h-4" /> Yönlendirme
+                                </h3>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <button onClick={() => setEditState(s => ({...s, rotation: (s.rotation - 90) % 360}))} className="p-3 bg-dark border border-white/10 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 flex flex-col items-center gap-2 text-xs transition-all">
+                                        <RotateCwIcon className="w-5 h-5 -scale-x-100" /> Sol
+                                    </button>
+                                    <button onClick={() => setEditState(s => ({...s, rotation: (s.rotation + 90) % 360}))} className="p-3 bg-dark border border-white/10 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 flex flex-col items-center gap-2 text-xs transition-all">
+                                        <RotateCwIcon className="w-5 h-5" /> Sağ
+                                    </button>
+                                    <button onClick={() => setEditState(s => ({...s, flipH: !s.flipH}))} className={`p-3 border rounded-xl flex flex-col items-center gap-2 text-xs transition-all ${editState.flipH ? 'bg-primary/20 border-primary text-white' : 'bg-dark border-white/10 text-slate-300 hover:bg-white/5'}`}>
+                                        <FlipVerticalIcon className="w-5 h-5 rotate-90" /> Yatay Çevir
+                                    </button>
+                                    <button onClick={() => setEditState(s => ({...s, flipV: !s.flipV}))} className={`p-3 border rounded-xl flex flex-col items-center gap-2 text-xs transition-all ${editState.flipV ? 'bg-primary/20 border-primary text-white' : 'bg-dark border-white/10 text-slate-300 hover:bg-white/5'}`}>
+                                        <FlipVerticalIcon className="w-5 h-5" /> Dikey Çevir
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Crop / Aspect Ratio */}
+                            <div className="space-y-4">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                                    <CropIcon className="w-4 h-4" /> Kırpma Oranı
+                                </h3>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {['original', '1:1', '16:9', '4:3', '9:16'].map((ratio) => (
+                                        <button 
+                                            key={ratio}
+                                            onClick={() => setEditState(s => ({...s, cropRatio: ratio as any}))}
+                                            className={`p-2 text-xs rounded-lg border transition-all ${editState.cropRatio === ratio ? 'bg-primary/20 border-primary text-white' : 'bg-dark border-white/10 text-slate-400 hover:bg-white/5'}`}
+                                        >
+                                            {ratio === 'original' ? 'Orijinal' : ratio}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Zoom / Scale */}
+                            <div className="space-y-4">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                                    <MaximizeIcon className="w-4 h-4" /> Yakınlaştır (Kırp)
+                                </h3>
+                                <div className="space-y-2">
+                                    <div className="flex justify-between text-xs text-slate-400">
+                                        <span>Uzak</span>
+                                        <span>{Math.round(editState.zoom * 100)}%</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="1" max="3" step="0.1" 
+                                        value={editState.zoom} 
+                                        onChange={(e) => setEditState(s => ({...s, zoom: parseFloat(e.target.value)}))}
+                                        className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer range-sm accent-primary"
+                                    />
+                                </div>
+                            </div>
+                        </>
+                      )}
+
+                      {activeEditTab === 'adjust' && (
+                        <div className="space-y-6">
+                             {[
+                                { label: 'Parlaklık', key: 'brightness', min: 0, max: 200, icon: <SettingsIcon /> },
+                                { label: 'Kontrast', key: 'contrast', min: 0, max: 200, icon: <SettingsIcon /> },
+                                { label: 'Doygunluk', key: 'saturation', min: 0, max: 200, icon: <SettingsIcon /> },
+                                { label: 'Renk Tonu', key: 'hueRotate', min: -180, max: 180, icon: <SettingsIcon /> },
+                                { label: 'Sepya', key: 'sepia', min: 0, max: 100, icon: <SettingsIcon /> },
+                                { label: 'Bulanıklık', key: 'blur', min: 0, max: 20, step: 0.5, icon: <SettingsIcon /> },
+                             ].map((filter) => (
+                                <div key={filter.label} className="space-y-2">
+                                    <div className="flex justify-between text-xs font-medium text-slate-300">
+                                        <span className="flex items-center gap-2">{filter.label}</span>
+                                        <span className="text-primary">{(editState as any)[filter.key]}</span>
+                                    </div>
+                                    <input 
+                                        type="range" 
+                                        min={filter.min} max={filter.max} step={filter.step || 1}
+                                        value={(editState as any)[filter.key]} 
+                                        onChange={(e) => setEditState(s => ({...s, [filter.key]: parseFloat(e.target.value)}))}
+                                        className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer range-sm accent-primary"
+                                    />
+                                </div>
+                             ))}
+                        </div>
+                      )}
+                   </div>
                 </div>
 
-                {/* Parlaklık */}
-                <div className="space-y-2">
-                  <label htmlFor="brightness" className="block text-sm font-medium text-slate-300">
-                    Parlaklık: <span className="text-primary">{editingSettings.brightness}%</span>
-                  </label>
-                  <input
-                    id="brightness"
-                    type="range"
-                    min="0"
-                    max="200"
-                    value={editingSettings.brightness}
-                    onChange={(e) => setEditingSettings(prev => ({ ...prev, brightness: Number(e.target.value) }))}
-                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer range-sm accent-primary"
-                    aria-label="Görselin parlaklığını ayarla"
-                  />
+                {/* Center: Canvas Preview */}
+                <div className="flex-1 bg-black/40 flex items-center justify-center p-8 overflow-hidden relative">
+                    {/* Checkerboard background */}
+                    <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ backgroundImage: 'radial-gradient(#475569 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
+                    
+                    <canvas 
+                        ref={canvasRef} 
+                        className="max-w-full max-h-full object-contain shadow-2xl border border-white/10"
+                    />
                 </div>
+             </div>
 
-                {/* Keskinlik (Kontrast ile simüle edildi) */}
-                <div className="space-y-2">
-                  <label htmlFor="contrast" className="block text-sm font-medium text-slate-300">
-                    Keskinlik: <span className="text-primary">{editingSettings.contrast}%</span>
-                  </label>
-                  <input
-                    id="contrast"
-                    type="range"
-                    min="0"
-                    max="200"
-                    value={editingSettings.contrast}
-                    onChange={(e) => setEditingSettings(prev => ({ ...prev, contrast: Number(e.target.value) }))}
-                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer range-sm accent-primary"
-                    aria-label="Görselin keskinliğini ayarla"
-                  />
-                </div>
-
-                {/* Buttons */}
-                <div className="mt-auto space-y-3">
-                  <button
-                    onClick={handleApplyEditsAndDownload}
-                    className="w-full flex items-center justify-center gap-2 p-3 rounded-xl font-bold text-lg bg-primary hover:bg-primaryHover text-white transition-all shadow-lg shadow-primary/10"
-                  >
-                    <DownloadIcon className="w-5 h-5" />
-                    Uygula & İndir
-                  </button>
-                  <button
-                    onClick={handleResetEdits}
-                    className="w-full flex items-center justify-center gap-2 p-3 rounded-xl font-bold text-lg bg-slate-700 hover:bg-slate-600 text-slate-200 transition-all"
-                  >
-                    <HistoryIcon className="w-5 h-5 rotate-180" />
-                    Sıfırla
-                  </button>
-                  <button
-                    onClick={handleCancelEdit}
-                    className="w-full flex items-center justify-center gap-2 p-3 rounded-xl font-bold text-lg text-slate-400 hover:text-white hover:bg-white/5 transition-all"
-                  >
-                    <TrashIcon className="w-5 h-5" />
-                    İptal
-                  </button>
-                </div>
-              </div>
-            </div>
-            {error && (
-              <div className="p-4 mt-6 bg-red-500/10 border border-red-500/20 rounded-xl flex items-start gap-3 text-red-400">
-                <AlertCircleIcon className="w-5 h-5 shrink-0 mt-0.5" />
-                <div className="text-sm">{error}</div>
-              </div>
-            )}
+             {/* Footer */}
+             <div className="p-6 border-t border-white/10 bg-surface/50 flex justify-end gap-4">
+                 <button onClick={() => setIsEditing(false)} className="px-6 py-3 rounded-xl text-slate-300 hover:bg-white/5 transition-colors font-medium">
+                     İptal
+                 </button>
+                 <button onClick={handleSaveEditor} className="px-8 py-3 rounded-xl bg-primary hover:bg-primaryHover text-white font-bold shadow-lg shadow-primary/20 transition-all flex items-center gap-2">
+                     {editTarget === 'reference' ? 'Referansı Güncelle' : 
+                      editTarget === 'batch' ? `Tümüne Uygula (${selectedIds.size})` : 'Uygula ve İndir'}
+                 </button>
+             </div>
           </div>
         </div>
       )}

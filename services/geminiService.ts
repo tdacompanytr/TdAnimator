@@ -1,5 +1,6 @@
-import { GoogleGenAI, Modality } from "@google/genai";
-import { AspectRatio } from "../types";
+
+import { GoogleGenAI, Modality, Type } from "@google/genai";
+import { AspectRatio, AIModel } from "../types";
 
 // Initialize the client
 const getAiClient = () => {
@@ -19,7 +20,9 @@ export const generateImage = async (
   prompt: string,
   aspectRatio: AspectRatio = '1:1',
   outputMimeType: 'image/jpeg' | 'image/png' = 'image/jpeg',
-  referenceImageBase64?: string // Optional reference image for style transfer/editing
+  referenceImageBase64?: string, // Optional reference image for style transfer/editing
+  seed?: number, // Optional seed for reproducibility
+  modelType: AIModel = 'gemini-flash' // Defaulted to Flash
 ): Promise<GenerateImageResult> => {
   try {
     const ai = getAiClient();
@@ -44,13 +47,15 @@ export const generateImage = async (
             {
               inlineData: {
                 data: base64Data,
-                mimeType: 'image/jpeg', // Assuming input is jpeg/png, standardized to generic image mime if needed, or pass actual
+                mimeType: 'image/jpeg', // Assuming input is jpeg/png
               },
             },
           ],
         },
         config: {
-          responseModalities: [Modality.IMAGE],
+          imageConfig: {
+            aspectRatio: aspectRatio
+          }
         },
       });
 
@@ -60,9 +65,37 @@ export const generateImage = async (
         throw new Error("Referans görsel ile üretim başarısız oldu.");
       }
 
-      const generatedPart = candidates[0].content.parts.find(p => p.inlineData);
+      const candidate = candidates[0];
+      // Safety check for content existence
+      if (!candidate.content || !candidate.content.parts || candidate.content.parts.length === 0) {
+          const reason = candidate.finishReason;
+          if (reason === 'SAFETY' || reason === 'RECITATION' || reason === 'BLOCKLIST') {
+             throw new Error("Görsel oluşturma güvenlik filtrelerine takıldı.");
+          }
+          if (reason === 'NO_IMAGE') {
+             throw new Error("Model bu istekle görsel oluşturulamayacağına karar verdi. Lütfen açıklamanızı (prompt) değiştirin.");
+          }
+          throw new Error(`Model (${model}) içerik oluşturamadı. (Sebep: ${reason || 'Bilinmiyor'})`);
+      }
+
+      // Find the image part, do not assume it is the first part.
+      let generatedPart = null;
+      for (const part of candidate.content.parts) {
+        if (part.inlineData) {
+          generatedPart = part;
+          break;
+        }
+      }
       
       if (!generatedPart || !generatedPart.inlineData || !generatedPart.inlineData.data) {
+        // Try to find text explanation
+        const textPart = candidate.content.parts.find(p => p.text);
+        if (textPart && textPart.text) {
+             const text = textPart.text.trim();
+             if (text.length > 0) {
+                 throw new Error(`Model görsel oluşturmadı. Yanıt: "${text.substring(0, 150)}..."`);
+             }
+        }
         throw new Error("API geçerli bir görsel verisi döndürmedi.");
       }
 
@@ -72,34 +105,78 @@ export const generateImage = async (
       };
 
     } else {
-      // CASE 2: Text Only (Text-to-Image)
-      // Use Imagen 3 for high quality generation
-      const model = 'imagen-4.0-generate-001';
+      // CASE 2: Text Only (Text-to-Image) - GEMINI ONLY (Imagen Removed)
       
-      const response = await ai.models.generateImages({
-        model: model,
-        prompt: prompt,
-        config: {
-          numberOfImages: 1,
-          outputMimeType: outputMimeType,
-          aspectRatio: aspectRatio,
-        },
-      });
-
-      if (!response.generatedImages || response.generatedImages.length === 0) {
-        throw new Error("API yanıt döndürdü ancak içinde görsel verisi bulunamadı. İsteminiz güvenlik filtrelerine takılmış olabilir.");
-      }
-
-      const generatedImage = response.generatedImages[0];
+      let modelName = 'gemini-2.5-flash-image'; // Default
       
-      if (!generatedImage.image || !generatedImage.image.imageBytes) {
-        throw new Error("API yanıtı eksik veri içeriyor.");
-      }
+      if (modelType === 'gemini-lite') {
+            // gemini-flash-lite-latest is text-only, so we fallback to the fastest image model
+            modelName = 'gemini-2.5-flash-image';
+      } 
+      // 'gemini-flash' uses default
 
-      return {
-        imageBytes: generatedImage.image.imageBytes,
-        mimeType: outputMimeType,
-      };
+      try {
+          const response = await ai.models.generateContent({
+            model: modelName,
+            contents: {
+                parts: [{ text: prompt }]
+            },
+            config: {
+                imageConfig: {
+                    aspectRatio: aspectRatio,
+                    // imageSize: "1K" // Optional
+                }
+            }
+          });
+
+          const candidates = response.candidates;
+          if (!candidates || candidates.length === 0) {
+            throw new Error(`${modelName} ile üretim başarısız oldu.`);
+          }
+          
+          const candidate = candidates[0];
+          
+          // Robust safety check for missing content or parts
+          if (!candidate.content || !candidate.content.parts || candidate.content.parts.length === 0) {
+              const reason = candidate.finishReason;
+              if (reason === 'SAFETY' || reason === 'RECITATION' || reason === 'BLOCKLIST') {
+                  throw new Error("Görsel oluşturma güvenlik filtrelerine takıldı.");
+              }
+              if (reason === 'NO_IMAGE') {
+                   throw new Error("Model görsel oluşturulamayacağına karar verdi (NO_IMAGE). Lütfen açıklamanızı değiştirin veya basitleştirin.");
+              }
+              // If it's an unknown reason, it might be a glitch or refusal.
+              throw new Error(`${modelName} boş içerik döndürdü. (Sebep: ${reason || 'Bilinmiyor'})`);
+          }
+
+          // Find the image part
+          let generatedPart = null;
+          for (const part of candidate.content.parts) {
+            if (part.inlineData) {
+                generatedPart = part;
+                break;
+            }
+          }
+
+          if (!generatedPart || !generatedPart.inlineData || !generatedPart.inlineData.data) {
+             // If no image returned (only text?), try to grab text for error
+             const textPart = candidate.content.parts.find(p => p.text);
+             if (textPart && textPart.text) {
+                 const text = textPart.text.trim();
+                 if (text.length > 0) {
+                     throw new Error(`Model görsel yerine metin döndürdü: "${text.substring(0, 150)}..."`);
+                 }
+             }
+             throw new Error(`${modelName} geçerli görsel verisi döndürmedi.`);
+          }
+
+          return {
+            imageBytes: generatedPart.inlineData.data,
+            mimeType: 'image/png',
+          };
+      } catch (error: any) {
+          throw error;
+      }
     }
 
   } catch (error: any) {
@@ -109,26 +186,149 @@ export const generateImage = async (
     let friendlyMessage = "Görüntü oluşturulurken beklenmeyen bir hata oluştu.";
 
     // Detaylı Hata Analizi
-    if (errorMessage.includes("safety") || errorMessage.includes("blocked") || errorMessage.includes("finish_reason")) {
+    if (errorMessage.includes("safety") || errorMessage.includes("blocked") || errorMessage.includes("güvenlik")) {
       friendlyMessage = "⚠️ Güvenlik Uyarısı: Girdiğiniz açıklama (prompt) veya referans görsel yapay zeka güvenlik filtrelerine takıldı.";
     } 
+    else if (errorMessage.includes("no_image") || errorMessage.includes("görsel oluşturulamayacağına karar verdi")) {
+       friendlyMessage = "🚫 Görsel Oluşturulamadı: Model isteğinizi reddetti (NO_IMAGE). Lütfen daha basit veya net bir prompt deneyin.";
+    }
+    else if (errorMessage.includes("model görsel yerine metin döndürdü") || errorMessage.includes("model görsel oluşturmadı")) {
+       friendlyMessage = "⚠️ Model Reddi: Model görsel yerine metin yanıtı verdi. Prompt'unuzu değiştirerek tekrar deneyin.";
+    }
     else if (errorMessage.includes("429") || errorMessage.includes("resource_exhausted") || errorMessage.includes("quota")) {
       friendlyMessage = "⏳ Kota Sınırı Aşıldı: Servis şu anda çok yoğun veya günlük kullanım limitiniz doldu. Lütfen birkaç dakika bekleyip tekrar deneyin.";
     } 
     else if (errorMessage.includes("400") || errorMessage.includes("invalid_argument")) {
-      friendlyMessage = "❌ Geçersiz İstek: Açıklamanız model tarafından işlenemedi. Lütfen referans görselin boyutunu veya formatını kontrol edin.";
+        if (errorMessage.includes("text output")) {
+             friendlyMessage = "❌ Model Hatası: Seçilen model görsel oluşturmayı desteklemiyor.";
+        } else {
+             friendlyMessage = "❌ Geçersiz İstek: Açıklamanız model tarafından işlenemedi.";
+        }
     } 
+    else if (errorMessage.includes("403") || errorMessage.includes("permission_denied")) {
+      friendlyMessage = "🚫 Yetki Hatası: Erişim izniniz olmayan bir model kullanılıyor.";
+    }
     else if (errorMessage.includes("401") || errorMessage.includes("unauthenticated")) {
       friendlyMessage = "🔑 Kimlik Doğrulama Hatası: API anahtarı geçersiz.";
     } 
     else if (errorMessage.includes("503") || errorMessage.includes("500")) {
       friendlyMessage = "☁️ Sunucu Hatası: Google yapay zeka sunucularında geçici bir problem yaşanıyor.";
     }
+     else if (errorMessage.includes("boş içerik") || errorMessage.includes("undefined")) {
+         friendlyMessage = "⚠️ İçerik Oluşturulamadı: Model isteğinizi işleyemedi (Muhtemelen güvenlik veya politika ihlali).";
+    }
     else {
       const technicalDetail = errorMessage.length > 100 ? errorMessage.substring(0, 100) + "..." : errorMessage;
-      friendlyMessage = `Beklenmeyen bir hata: ${technicalDetail}.`;
+      friendlyMessage = `Hata: ${technicalDetail}`;
     }
 
     throw new Error(friendlyMessage);
+  }
+};
+
+export const suggestSmartCrop = async (imageBase64: string): Promise<{ ratio: string; reason: string }> => {
+  try {
+    const ai = getAiClient();
+    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: {
+        parts: [
+          {
+            inlineData: {
+              mimeType: 'image/jpeg',
+              data: base64Data
+            }
+          },
+          {
+            text: `Analyze this image's composition, subject placement, and aesthetic balance. 
+            Determine the single best aspect ratio from the following list: ['1:1', '16:9', '4:3', '9:16', '3:4'].
+            
+            Return the result in JSON format with two keys:
+            1. "ratio": The selected ratio string (e.g. "16:9").
+            2. "reason": A very brief explanation (max 10 words) of why this ratio fits best (e.g. "Landscape composition suits the mountains").`
+          }
+        ]
+      },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            ratio: { type: Type.STRING },
+            reason: { type: Type.STRING }
+          }
+        }
+      }
+    });
+
+    // SDK getter handles basic extraction
+    const text = response.text; 
+    if (!text) throw new Error("Empty response from AI");
+    
+    const result = JSON.parse(text);
+    return {
+      ratio: result.ratio || 'original',
+      reason: result.reason || 'Optimal composition detected.'
+    };
+
+  } catch (error) {
+    console.error("Smart Crop Analysis Failed:", error);
+    throw new Error("Yapay zeka görsel analizi yapamadı.");
+  }
+};
+
+export const enhancePrompt = async (prompt: string): Promise<{label: string; text: string}[]> => {
+  try {
+    if (!prompt.trim()) return [];
+    
+    const ai = getAiClient();
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: {
+        parts: [
+          {
+            text: `You are an expert prompt engineer for AI image generators. 
+            Your task is to analyze the user's input and generate 3 detailed, high-quality prompt variations.
+            
+            User Input: "${prompt}"
+            
+            **LANGUAGE RULES:**
+            1. **Detect the language** of the "User Input".
+            2. The generated prompt suggestions ('text') MUST be written in the **SAME LANGUAGE** as the "User Input". (e.g., if input is Turkish, output Turkish prompts; if English, output English).
+            3. The 'label' must be localized to **Turkish** regardless of the input language (Use labels: 'Geliştirilmiş', 'Sanatsal', 'Sinematik').
+
+            **VARIATION RULES:**
+            1. "Geliştirilmiş" (Enhanced): Expand the description with sensory details, lighting (e.g. volumetric, cinematic), and texture.
+            2. "Sanatsal" (Artistic): Reimagine the scene in a specific art style (e.g. Cyberpunk, Impressionist) with focus on color and mood.
+            3. "Sinematik" (Cinematic): Focus on camera work (e.g. 35mm, wide angle), depth of field, and dramatic atmosphere.
+            
+            Return the result in JSON format as an array of objects with 'label' and 'text' keys.`
+          }
+        ]
+      },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              label: { type: Type.STRING },
+              text: { type: Type.STRING }
+            }
+          }
+        }
+      }
+    });
+
+    const text = response.text;
+    if (!text) throw new Error("Empty response");
+    
+    return JSON.parse(text);
+  } catch (error) {
+    console.error("Prompt enhancement failed", error);
+    throw new Error("Prompt geliştirme başarısız oldu.");
   }
 };

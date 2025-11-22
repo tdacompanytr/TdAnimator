@@ -1,4 +1,7 @@
 
+
+
+
 export interface GeneratedImage {
   base64: string;
   mimeType: string;
@@ -15,6 +18,10 @@ export interface GeneratedImage {
   lighting?: string;
   cameraAngle?: string;
   colorTone?: string;
+  composition?: string;
+  mood?: string;
+  seed?: number;
+  model?: string; // Stores which model generated this
 }
 
 export type AspectRatio = '1:1' | '3:4' | '4:3' | '16:9' | '9:16';
@@ -47,6 +54,16 @@ export type WatermarkSize = 'small' | 'medium' | 'large' | 'extraLarge';
 export type LightingType = 'none' | 'studio' | 'natural' | 'golden' | 'dramatic' | 'neon' | 'dark' | 'volumetric';
 export type CameraAngle = 'none' | 'wide' | 'close-up' | 'macro' | 'drone' | 'isometric' | 'low-angle' | 'eye-level';
 export type ColorTone = 'none' | 'vibrant' | 'bw' | 'sepia' | 'pastel' | 'muted' | 'cool' | 'warm';
+export type Composition = 'none' | 'symmetrical' | 'golden-ratio' | 'rule-of-thirds' | 'minimalist' | 'centered' | 'chaotic' | 'framed';
+export type Mood = 'none' | 'happy' | 'dark' | 'mysterious' | 'peaceful' | 'energetic' | 'melancholic' | 'romantic' | 'eerie';
+
+// AI Model Types - Removed Imagen 3 and Gemini Pro
+export type AIModel = 'gemini-flash' | 'gemini-lite';
+
+export const AI_MODELS: { value: AIModel; label: string; description: string; icon: string }[] = [
+  { value: 'gemini-flash', label: 'Gemini 2.5 Flash', description: 'Hızlı, dengeli ve çok yönlü.', icon: 'zap' },
+  { value: 'gemini-lite', label: 'Gemini Flash Lite', description: 'En hızlı üretim, düşük bekleme süresi.', icon: 'rabbit' },
+];
 
 export const ASPECT_RATIOS: { value: AspectRatio; label: string; description: string }[] = [
   { value: '1:1', label: 'Kare (1:1)', description: 'Instagram ve profil resimleri için ideal' },
@@ -141,4 +158,25 @@ export const COLOR_TONES: { value: ColorTone; label: string; promptModifier: str
   { value: 'muted', label: 'Soluk / Mat', promptModifier: ', muted colors, desaturated, matte look' },
   { value: 'cool', label: 'Soğuk Tonlar', promptModifier: ', cool color palette, blue tones, cold atmosphere' },
   { value: 'warm', label: 'Sıcak Tonlar', promptModifier: ', warm color palette, orange and yellow tones, cozy' },
+];
+
+export const COMPOSITIONS: { value: Composition; label: string; promptModifier: string }[] = [
+    { value: 'none', label: 'Varsayılan', promptModifier: '' },
+    { value: 'symmetrical', label: 'Simetrik', promptModifier: ', symmetrical composition, perfectly balanced, centered' },
+    { value: 'golden-ratio', label: 'Altın Oran', promptModifier: ', golden ratio composition, perfect proportions, fibonacci spiral' },
+    { value: 'rule-of-thirds', label: '1/3 Kuralı', promptModifier: ', rule of thirds composition, dynamic framing' },
+    { value: 'minimalist', label: 'Minimalist', promptModifier: ', minimalist composition, plenty of negative space, simple background' },
+    { value: 'chaotic', label: 'Kaotik / Karmaşık', promptModifier: ', chaotic composition, busy scene, maximalist, detailed' },
+    { value: 'framed', label: 'Çerçeveli', promptModifier: ', framed composition, view through a window or arch' },
+];
+
+export const MOODS: { value: Mood; label: string; promptModifier: string }[] = [
+    { value: 'none', label: 'Varsayılan', promptModifier: '' },
+    { value: 'happy', label: 'Neşeli', promptModifier: ', happy atmosphere, cheerful, positive vibes, bright' },
+    { value: 'dark', label: 'Karanlık', promptModifier: ', dark mood, gloomy, gothic atmosphere, scary' },
+    { value: 'mysterious', label: 'Gizemli', promptModifier: ', mysterious atmosphere, enigmatic, fog, intrigue' },
+    { value: 'peaceful', label: 'Huzurlu', promptModifier: ', peaceful atmosphere, calm, serene, zen' },
+    { value: 'energetic', label: 'Enerjik', promptModifier: ', energetic atmosphere, action packed, dynamic movement' },
+    { value: 'romantic', label: 'Romantik', promptModifier: ', romantic atmosphere, soft lighting, love, dreamy' },
+    { value: 'eerie', label: 'Ürkütücü', promptModifier: ', eerie atmosphere, unsettling, horror vibe, haunted' },
 ];
