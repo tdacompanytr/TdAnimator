@@ -485,19 +485,21 @@ export const getSettingsAdvice = async (settingsContext: string): Promise<string
 };
 
 export const analyzeAudioForImage = async (
-    audioBase64: string,
+    mediaBase64: string,
     userDescription?: string,
     hasReferenceImage: boolean = false,
     genre: MusicGenre = 'none',
-    style: CoverStyle = 'none'
+    style: CoverStyle = 'none',
+    mimeType: string = 'audio/mp3' // Default to mp3 if not provided
 ): Promise<{ prompt: string; descriptionTR: string }> => {
     try {
         const ai = getAiClient();
-        const base64Data = audioBase64.replace(/^data:audio\/\w+;base64,/, "");
+        // Remove common base64 headers to get raw data
+        const base64Data = mediaBase64.replace(/^data:(audio|video)\/\w+;base64,/, "");
 
         const prompt = `
             You are a professional Album Art Designer.
-            Listen to this audio file. Analyze its genre, mood, tempo, instrumentation, and emotional vibe.
+            Listen/Watch this media file. Analyze its genre, mood, tempo, instrumentation, and emotional vibe.
             
             USER SETTINGS:
             - User Description: "${userDescription || 'None'}"
@@ -510,7 +512,7 @@ export const analyzeAudioForImage = async (
                  Focus completely on the STYLE, ATMOSPHERE, LIGHTING, and COLOR PALETTE that matches the song.**`
               : 'Describe the subject matter, art style, colors, and lighting for a new album cover.'}
 
-            Based on the audio AND the User Settings above, generate two outputs:
+            Based on the audio/video AND the User Settings above, generate two outputs:
             1. "prompt": A high-quality AI image generation prompt in ENGLISH. Includes art style, mood, colors, lighting, quality keywords (4k, masterpiece). 
                Make sure to incorporate the ${style} style if specified.
             2. "descriptionTR": A detailed description of this visual concept in TURKISH (Türkçe). Explain what the cover looks like and the mood it conveys.
@@ -526,7 +528,7 @@ export const analyzeAudioForImage = async (
                 parts: [
                     {
                         inlineData: {
-                            mimeType: 'audio/mp3',
+                            mimeType: mimeType,
                             data: base64Data
                         }
                     },
@@ -547,29 +549,27 @@ export const analyzeAudioForImage = async (
         });
 
         const text = response.text;
-        if (!text) throw new Error("Audio analysis returned empty result.");
+        if (!text) throw new Error("Media analysis returned empty result.");
         
         let result;
         try {
-            // Remove markdown code blocks if present
             const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
             result = JSON.parse(cleanText);
         } catch (e) {
             console.warn("JSON Parse Error, falling back to raw text", e);
-             // Fallback: If JSON parsing fails, treat text as prompt and generic TR desc
             return {
                 prompt: text.substring(0, 500),
-                descriptionTR: "Ses analizi yapıldı, görsel oluşturuluyor."
+                descriptionTR: "Medya analizi yapıldı, görsel oluşturuluyor."
             };
         }
 
         return {
             prompt: result.prompt || "Abstract album art",
-            descriptionTR: result.descriptionTR || "Müzik analiz edildi ve kapak tasarlandı."
+            descriptionTR: result.descriptionTR || "Medya analiz edildi ve kapak tasarlandı."
         };
 
     } catch (error: any) {
         console.error("Audio Analysis Failed:", error);
-        throw new Error("Şarkı analizi başarısız oldu: " + (error.message || "Bilinmeyen hata"));
+        throw new Error("Medya analizi başarısız oldu: " + (error.message || "Bilinmeyen hata"));
     }
 };

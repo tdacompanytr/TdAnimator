@@ -11,8 +11,8 @@ interface CoverArtGeneratorProps {
 type MockupType = 'flat' | 'vinyl' | 'cd';
 
 const CoverArtGenerator: React.FC<CoverArtGeneratorProps> = ({ user }) => {
-  const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [audioSrc, setAudioSrc] = useState<string | null>(null);
+  const [mediaFile, setMediaFile] = useState<File | null>(null);
+  const [mediaSrc, setMediaSrc] = useState<string | null>(null);
   const [userPrompt, setUserPrompt] = useState('');
   // Reference Image for Cover Art
   const [referenceImage, setReferenceImage] = useState<string | null>(null);
@@ -58,17 +58,17 @@ const CoverArtGenerator: React.FC<CoverArtGeneratorProps> = ({ user }) => {
     if (!canInteract) return;
 
     const file = e.dataTransfer.files?.[0];
-    if (file && file.type.startsWith('audio/')) {
-        processAudioFile(file);
+    if (file && (file.type.startsWith('audio/') || file.type.startsWith('video/'))) {
+        processMediaFile(file);
     } else {
-        setError("Lütfen geçerli bir MP3/Ses dosyası yükleyin.");
+        setError("Lütfen geçerli bir MP3 veya MP4 dosyası yükleyin.");
     }
   }, [canInteract]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!canInteract) return;
     const file = e.target.files?.[0];
-    if (file) processAudioFile(file);
+    if (file) processMediaFile(file);
   };
 
   // Handle Reference Image Selection
@@ -90,21 +90,21 @@ const CoverArtGenerator: React.FC<CoverArtGeneratorProps> = ({ user }) => {
     }
   };
 
-  const processAudioFile = (file: File) => {
-    if (file.size > 10 * 1024 * 1024) { // 10MB limit for browser perf
-        setError("Dosya boyutu 10MB'dan küçük olmalıdır.");
+  const processMediaFile = (file: File) => {
+    if (file.size > 20 * 1024 * 1024) { // Increased limit for MP4s (20MB)
+        setError("Dosya boyutu 20MB'dan küçük olmalıdır.");
         return;
     }
-    setAudioFile(file);
+    setMediaFile(file);
     const url = URL.createObjectURL(file);
-    setAudioSrc(url);
+    setMediaSrc(url);
     setError(null);
     setGeneratedCover(null);
   };
 
   const removeFile = () => {
-    setAudioFile(null);
-    setAudioSrc(null);
+    setMediaFile(null);
+    setMediaSrc(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -114,29 +114,30 @@ const CoverArtGenerator: React.FC<CoverArtGeneratorProps> = ({ user }) => {
   };
 
   const handleGenerate = async () => {
-    if (!audioFile || !canInteract) return;
+    if (!mediaFile || !canInteract) return;
     
     setIsProcessing(true);
     setError(null);
     setShowRefineInput(false);
     
     try {
-        // 1. Convert Audio to Base64
+        // 1. Convert Media to Base64
         setProcessingStep('analyzing');
         const reader = new FileReader();
-        reader.readAsDataURL(audioFile);
+        reader.readAsDataURL(mediaFile);
         
         reader.onloadend = async () => {
             try {
-                const base64Audio = reader.result as string;
+                const base64Media = reader.result as string;
                 
-                // 2. Analyze Audio with Gemini (Now passing genre and style)
+                // 2. Analyze Media with Gemini (Passing correct mimeType)
                 const analysisResult = await analyzeAudioForImage(
-                    base64Audio, 
+                    base64Media, 
                     userPrompt, 
                     !!referenceImage, 
                     selectedGenre, 
-                    selectedStyle
+                    selectedStyle,
+                    mediaFile.type // Pass the correct mime type (audio/mp3 or video/mp4)
                 );
                 
                 // Set UI text to Turkish description
@@ -201,6 +202,8 @@ const CoverArtGenerator: React.FC<CoverArtGeneratorProps> = ({ user }) => {
     }
   };
 
+  const isVideo = mediaFile?.type.startsWith('video/');
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 h-full min-h-[600px]">
         {/* LEFT PANEL: Input */}
@@ -215,28 +218,28 @@ const CoverArtGenerator: React.FC<CoverArtGeneratorProps> = ({ user }) => {
                 </div>
             </div>
 
-            {/* Audio Upload Area */}
+            {/* Media Upload Area */}
             <div 
                 className={`
                     border-2 border-dashed rounded-2xl transition-all flex flex-col items-center justify-center p-6 relative overflow-hidden group min-h-[160px]
-                    ${isDragging ? 'border-indigo-500 bg-indigo-500/10' : audioFile ? 'border-indigo-500/50 bg-indigo-900/10' : 'border-white/10 bg-darker hover:border-white/20 hover:bg-white/5'}
+                    ${isDragging ? 'border-indigo-500 bg-indigo-500/10' : mediaFile ? 'border-indigo-500/50 bg-indigo-900/10' : 'border-white/10 bg-darker hover:border-white/20 hover:bg-white/5'}
                 `}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
             >
-                {!audioFile ? (
+                {!mediaFile ? (
                     <div className="text-center space-y-4">
                         <div className="w-16 h-16 bg-indigo-500/20 rounded-full flex items-center justify-center mx-auto group-hover:scale-110 transition-transform">
                             <UploadCloudIcon className="w-8 h-8 text-indigo-400" />
                         </div>
                         <div>
-                            <p className="text-base font-bold text-white">MP3 Dosyasını Sürükle</p>
-                            <p className="text-xs text-slate-500 mt-1">veya bilgisayarından seç (Max 10MB)</p>
+                            <p className="text-base font-bold text-white">MP3 veya MP4 Dosyasını Sürükle</p>
+                            <p className="text-xs text-slate-500 mt-1">veya bilgisayarından seç (Max 20MB)</p>
                         </div>
                         <input 
                             type="file" 
-                            accept="audio/*" 
+                            accept="audio/*,video/mp4,video/quicktime" 
                             ref={fileInputRef} 
                             onChange={handleFileSelect} 
                             className="hidden" 
@@ -252,15 +255,21 @@ const CoverArtGenerator: React.FC<CoverArtGeneratorProps> = ({ user }) => {
                 ) : (
                     <div className="w-full h-full flex flex-col items-center justify-center gap-3 relative z-10">
                         <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center shadow-2xl animate-spin-slow">
-                            <DiscIcon className="w-8 h-8 text-white" />
+                            {isVideo ? <SparklesIcon className="w-8 h-8 text-white" /> : <DiscIcon className="w-8 h-8 text-white" />}
                         </div>
                         <div className="text-center">
-                            <p className="text-white font-bold text-sm truncate max-w-xs">{audioFile.name}</p>
-                            <p className="text-slate-400 text-[10px]">{(audioFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                            <p className="text-white font-bold text-sm truncate max-w-xs">{mediaFile.name}</p>
+                            <p className="text-slate-400 text-[10px]">{(mediaFile.size / 1024 / 1024).toFixed(2)} MB</p>
                         </div>
                         
-                        {audioSrc && (
-                            <audio controls src={audioSrc} className="w-full max-w-xs mt-1 opacity-80 h-8" />
+                        {mediaSrc && (
+                            <div className="mt-2 w-full max-w-xs flex justify-center">
+                                {isVideo ? (
+                                    <video src={mediaSrc} controls className="h-24 rounded-lg border border-white/10" />
+                                ) : (
+                                    <audio controls src={mediaSrc} className="w-full opacity-80 h-8" />
+                                )}
+                            </div>
                         )}
 
                         <button 
@@ -377,10 +386,10 @@ const CoverArtGenerator: React.FC<CoverArtGeneratorProps> = ({ user }) => {
 
             <button
                 onClick={handleGenerate}
-                disabled={!audioFile || isProcessing || !canInteract}
+                disabled={!mediaFile || isProcessing || !canInteract}
                 className={`
                     w-full py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 shadow-lg transition-all
-                    ${!audioFile || isProcessing || !canInteract
+                    ${!mediaFile || isProcessing || !canInteract
                         ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
                         : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-indigo-500/25'}
                 `}
@@ -388,7 +397,7 @@ const CoverArtGenerator: React.FC<CoverArtGeneratorProps> = ({ user }) => {
                 {isProcessing ? (
                     <>
                         <LoaderIcon className="w-6 h-6 animate-spin" />
-                        {processingStep === 'analyzing' ? 'Şarkı Dinleniyor...' : 'Kapak Tasarlanıyor...'}
+                        {processingStep === 'analyzing' ? (isVideo ? 'Medya Analiz Ediliyor...' : 'Şarkı Dinleniyor...') : 'Kapak Tasarlanıyor...'}
                     </>
                 ) : (
                     <>
@@ -590,7 +599,7 @@ const CoverArtGenerator: React.FC<CoverArtGeneratorProps> = ({ user }) => {
                     </div>
                     <h3 className="text-2xl font-bold text-white mb-2">Henüz Kapak Yok</h3>
                     <p className="text-slate-400">
-                        Sol taraftan bir şarkı yükle ve "Kapağı Oluştur" butonuna bas. Yapay zeka şarkıyı dinleyip uygun görseli tasarlayacak.
+                        Sol taraftan bir şarkı veya video yükle ve "Kapağı Oluştur" butonuna bas. Yapay zeka medyanı analiz edip uygun görseli tasarlayacak.
                     </p>
                 </div>
             )}
