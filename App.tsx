@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import ImageGenerator from './components/ImageGenerator';
 import AICritic from './components/AICritic';
 import CoverArtGenerator from './components/CoverArtGenerator';
-import { UserIcon, LogOutIcon, SettingsIcon, BrushIcon, RobotIcon, ImageIcon, MusicIcon } from './components/Icons';
+import { UserIcon, LogOutIcon, SettingsIcon, BrushIcon, RobotIcon, ImageIcon, MusicIcon, InfoIcon } from './components/Icons';
 import { setCookie, getCookie, eraseCookie } from './utils/cookieUtils';
 import { User, UserRole } from './types';
 
@@ -20,6 +20,9 @@ const App: React.FC = () => {
   
   // Global Settings State passed to Components
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  // Cross-Component Communication State
+  const [criticInitialMessage, setCriticInitialMessage] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     const savedUserStr = getCookie('td_user_data');
@@ -62,6 +65,11 @@ const App: React.FC = () => {
     setUsernameInput('');
     setRoleInput('editor');
     setIsModalOpen(true);
+  };
+
+  const handleAnalyzeSettings = (contextString: string) => {
+    setCriticInitialMessage(contextString);
+    setCurrentView('critic');
   };
 
   const getRoleLabel = (role: UserRole) => {
@@ -168,6 +176,22 @@ const App: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-20">
             <div className="flex items-center gap-6">
+              
+              {/* Info / About Icon */}
+              <div className="relative group flex items-center">
+                 <button className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all">
+                    <InfoIcon className="w-5 h-5" />
+                 </button>
+                 {/* Tooltip */}
+                 <div className="absolute top-full left-0 mt-2 w-max px-4 py-3 bg-surface border border-white/10 rounded-xl shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 backdrop-blur-md translate-y-2 group-hover:translate-y-0">
+                    <p className="text-xs text-slate-300">
+                        <span className="font-bold text-primary block mb-1">Son Güncelleme:</span>
+                        24 Kasım 2025
+                    </p>
+                    <p className="text-[10px] text-slate-500 mt-1 pt-1 border-t border-white/5">Sürüm 1.4.0</p>
+                 </div>
+              </div>
+
               {/* Header Logo */}
               <div 
                 onClick={() => setCurrentView('generator')}
@@ -269,6 +293,7 @@ const App: React.FC = () => {
                   isSettingsOpen={isSettingsOpen} 
                   onSettingsClose={() => setIsSettingsOpen(false)} 
                   user={user}
+                  onAnalyzeSettings={handleAnalyzeSettings}
                 />
              </>
           )}
@@ -278,6 +303,7 @@ const App: React.FC = () => {
                 user={user}
                 isSettingsOpen={isSettingsOpen}
                 onSettingsClose={() => setIsSettingsOpen(false)}
+                initialMessage={criticInitialMessage}
              />
           )}
 

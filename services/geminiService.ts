@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Modality, Type } from "@google/genai";
-import { AspectRatio, AIModel, AICriticAnalysis, CriticPersona, AnalysisDepth } from "../types";
+import { AspectRatio, AIModel, AICriticAnalysis, CriticPersona, AnalysisDepth, MusicGenre, CoverStyle } from "../types";
 
 // Initialize the client
 const getAiClient = () => {
@@ -275,7 +275,6 @@ export const suggestSmartCrop = async (imageBase64: string): Promise<{ ratio: st
       }
     });
 
-    // SDK getter handles basic extraction
     const text = response.text; 
     if (!text) throw new Error("Empty response from AI");
     
@@ -450,11 +449,48 @@ export const analyzeImage = async (
   }
 };
 
+export const getSettingsAdvice = async (settingsContext: string): Promise<string> => {
+    try {
+        const ai = getAiClient();
+        const prompt = `
+            You are a professional Creative Director and AI Image Generation Expert.
+            The user wants advice on their current image generation settings.
+            
+            CURRENT SETTINGS:
+            ${settingsContext}
+            
+            TASK:
+            1. Analyze the combination of Prompt, Style, Lighting, Mood, etc.
+            2. Identify any conflicts (e.g., "Cyberpunk style" with "Natural Lighting" might conflict).
+            3. Suggest improvements to make the image more impactful.
+            4. If the prompt is too simple, suggest details to add.
+            
+            OUTPUT RULES:
+            - Write in **TURKISH** (Türkçe).
+            - Be concise but helpful.
+            - Use bullet points for suggestions.
+            - Tone: Professional, encouraging, and expert.
+        `;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [{ text: prompt }] }
+        });
+
+        return response.text || "Tavsiye oluşturulamadı.";
+    } catch (error) {
+        console.error("Settings Advice failed", error);
+        throw new Error("Tavsiye alınırken bir hata oluştu.");
+    }
+};
+
 export const analyzeAudioForImage = async (
     audioBase64: string,
     userDescription?: string,
-    hasReferenceImage: boolean = false
-): Promise<string> => {
+    hasReferenceImage: boolean = false,
+    genre: MusicGenre = 'none',
+    style: CoverStyle = 'none'
+): Promise<{ prompt: string; descriptionTR: string }> => {
     try {
         const ai = getAiClient();
         const base64Data = audioBase64.replace(/^data:audio\/\w+;base64,/, "");
@@ -463,24 +499,25 @@ export const analyzeAudioForImage = async (
             You are a professional Album Art Designer.
             Listen to this audio file. Analyze its genre, mood, tempo, instrumentation, and emotional vibe.
             
-            ${userDescription ? `USER REQUEST: The user specifically wants: "${userDescription}".` : ''}
+            USER SETTINGS:
+            - User Description: "${userDescription || 'None'}"
+            - Explicit Genre: ${genre !== 'none' ? genre : 'Detect automatically'}
+            - Explicit Visual Style: ${style !== 'none' ? style : 'Detect automatically'}
             
             ${hasReferenceImage 
-              ? `**CRITICAL: The user has provided a REFERENCE IMAGE that will be used as the base. 
-                 DO NOT suggest a specific subject matter (like 'a cat', 'a car', 'a landscape') because we must keep the reference image's subject.
-                 INSTEAD, focus completely on the STYLE, ATMOSPHERE, LIGHTING, and COLOR PALETTE that matches the song.**`
+              ? `**CRITICAL: The user has provided a REFERENCE IMAGE.
+                 DO NOT suggest a specific subject matter (like 'a cat', 'a car').
+                 Focus completely on the STYLE, ATMOSPHERE, LIGHTING, and COLOR PALETTE that matches the song.**`
               : 'Describe the subject matter, art style, colors, and lighting for a new album cover.'}
 
-            Based on the audio, write a high-quality AI prompt.
-            
-            The prompt should include:
-            ${hasReferenceImage ? '' : '- Subject matter'}
-            - Art style (e.g. minimal, surreal, photographic, painting, cyberpunk)
-            - Color palette matching the song's mood
-            - Lighting and atmosphere
-            - Quality keywords (e.g. 4k, masterpiece, album cover art)
-            
-            OUTPUT ONLY THE RAW PROMPT TEXT. No explanations.
+            Based on the audio AND the User Settings above, generate two outputs:
+            1. "prompt": A high-quality AI image generation prompt in ENGLISH. Includes art style, mood, colors, lighting, quality keywords (4k, masterpiece). 
+               Make sure to incorporate the ${style} style if specified.
+            2. "descriptionTR": A detailed description of this visual concept in TURKISH (Türkçe). Explain what the cover looks like and the mood it conveys.
+
+            OUTPUT FORMAT:
+            Return ONLY a valid JSON object with keys "prompt" and "descriptionTR".
+            Do NOT use Markdown code blocks.
         `;
 
         const response = await ai.models.generateContent({
@@ -495,13 +532,41 @@ export const analyzeAudioForImage = async (
                     },
                     { text: prompt }
                 ]
+            },
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        prompt: { type: Type.STRING },
+                        descriptionTR: { type: Type.STRING }
+                    },
+                    required: ["prompt", "descriptionTR"]
+                }
             }
         });
 
         const text = response.text;
         if (!text) throw new Error("Audio analysis returned empty result.");
         
-        return text.trim();
+        let result;
+        try {
+            // Remove markdown code blocks if present
+            const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+            result = JSON.parse(cleanText);
+        } catch (e) {
+            console.warn("JSON Parse Error, falling back to raw text", e);
+             // Fallback: If JSON parsing fails, treat text as prompt and generic TR desc
+            return {
+                prompt: text.substring(0, 500),
+                descriptionTR: "Ses analizi yapıldı, görsel oluşturuluyor."
+            };
+        }
+
+        return {
+            prompt: result.prompt || "Abstract album art",
+            descriptionTR: result.descriptionTR || "Müzik analiz edildi ve kapak tasarlandı."
+        };
 
     } catch (error: any) {
         console.error("Audio Analysis Failed:", error);

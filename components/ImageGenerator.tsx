@@ -1,10 +1,7 @@
-
-
-
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { generateImage, suggestSmartCrop, enhancePrompt } from '../services/geminiService';
 import { AspectRatio, ASPECT_RATIOS, GeneratedImage, WatermarkTextEffect, WATERMARK_EFFECTS, WatermarkPosition, WATERMARK_POSITIONS, WatermarkSize, WATERMARK_SIZES, Resolution, RESOLUTIONS, StylePreset, STYLE_PRESETS, LightingType, LIGHTING_TYPES, CameraAngle, CAMERA_ANGLES, ColorTone, COLOR_TONES, Composition, COMPOSITIONS, Mood, MOODS, AIModel, AI_MODELS, User } from '../types';
-import { WandIcon, DownloadIcon, AlertCircleIcon, LoaderIcon, ImageIcon, HistoryIcon, TrashIcon, ShareIcon, StampIcon, EditIcon, SettingsIcon, XIcon, UploadCloudIcon, ArchiveIcon, CheckSquareIcon, SquareIcon, RefreshCwIcon, LayersIcon, BrushIcon, SparklesIcon, CropIcon, RotateCwIcon, FlipVerticalIcon, SlidersIcon, MaximizeIcon, CopyIcon, ZapIcon, ScanEyeIcon, CpuIcon, BrainIcon, RabbitIcon, LightbulbIcon } from './Icons';
+import { WandIcon, DownloadIcon, AlertCircleIcon, LoaderIcon, ImageIcon, HistoryIcon, TrashIcon, ShareIcon, StampIcon, EditIcon, SettingsIcon, XIcon, UploadCloudIcon, ArchiveIcon, CheckSquareIcon, SquareIcon, RefreshCwIcon, LayersIcon, BrushIcon, SparklesIcon, CropIcon, RotateCwIcon, FlipVerticalIcon, SlidersIcon, MaximizeIcon, CopyIcon, ZapIcon, ScanEyeIcon, CpuIcon, BrainIcon, RabbitIcon, LightbulbIcon, RobotIcon } from './Icons';
 import JSZip from 'jszip';
 
 const MAX_HISTORY_ITEMS = 5; 
@@ -13,6 +10,7 @@ interface ImageGeneratorProps {
   isSettingsOpen?: boolean;
   onSettingsClose?: () => void;
   user: User | null;
+  onAnalyzeSettings?: (settingsContext: string) => void;
 }
 
 // Advanced Editor Types
@@ -84,7 +82,7 @@ const CollapsibleSection = ({
   </div>
 );
 
-const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false, onSettingsClose = () => {}, user }) => {
+const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false, onSettingsClose = () => {}, user, onAnalyzeSettings }) => {
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1');
   const [resolution, setResolution] = useState<Resolution>('hd');
@@ -180,6 +178,29 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
 
   const toggleSection = (section: keyof typeof activeSections) => {
     setActiveSections(prev => ({ ...prev, [section]: !prev[section] }));
+  };
+
+  const handleConsultAI = () => {
+    if (!onAnalyzeSettings) return;
+    if (!prompt.trim()) {
+      setError("Lütfen önce bir prompt girin.");
+      return;
+    }
+    
+    // Construct context string
+    const context = `
+      Prompt: "${prompt}"
+      Model: ${selectedModel}
+      Aspect Ratio: ${aspectRatio}
+      Style: ${stylePreset}
+      Lighting: ${lighting}
+      Mood: ${mood}
+      Color Tone: ${colorTone}
+      Camera Angle: ${cameraAngle}
+      Reference Image: ${referenceImage ? 'Yes' : 'No'}
+    `;
+    
+    onAnalyzeSettings(context);
   };
 
   const saveToHistory = (newImage: GeneratedImage) => {
@@ -354,10 +375,8 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
   const handleBatchVariations = async () => {
     if (!canGenerate) return;
     if (selectedIds.size === 0) return;
-    if (!batchVariationPrompt.trim()) {
-      setError("Lütfen varyasyon için bir ek açıklama girin.");
-      return;
-    }
+    
+    // Removed prompt check to allow generating variations of the original prompt (re-roll)
     
     setShowVariationInput(false);
     setIsLoading(true);
@@ -368,7 +387,8 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
       
       // Process sequentially to avoid rate limits and overwhelming the browser
       for (const item of selectedItems) {
-        const newPrompt = `${item.prompt} ${batchVariationPrompt.trim()}`;
+        const promptModifier = batchVariationPrompt.trim();
+        const newPrompt = promptModifier ? `${item.prompt} ${promptModifier}` : item.prompt;
         
         // Using the original parameters but with modified prompt
         // Fallback model to selectedModel if item.model is invalid (e.g. deleted models)
@@ -387,7 +407,9 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
            colorTone: item.colorTone as ColorTone,
            composition: item.composition as Composition,
            mood: item.mood as Mood,
-           model: modelToUse
+           model: modelToUse,
+           // Force a new seed or let it be random if user didn't specify one in original
+           seed: undefined 
         });
         
         // Small delay between requests
@@ -1042,6 +1064,18 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                       {isEnhancingPrompt ? 'Geliştiriliyor...' : 'AI İle Geliştir'}
                    </button>
                 )}
+
+                 {/* Ask AI Settings Advice Button */}
+                 {prompt.trim().length > 3 && !isLoading && canGenerate && (
+                   <button
+                     onClick={handleConsultAI}
+                     className="absolute bottom-3 right-32 z-10 flex items-center gap-1.5 px-2 py-1 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 text-indigo-300 text-xs font-bold transition-all"
+                     title="AI'dan ayar tavsiyesi al"
+                   >
+                      <RobotIcon className="w-3 h-3" />
+                      Ayarları Analiz Et
+                   </button>
+                )}
                 
                 {/* Reference Image Preview & Upload Button Area */}
                 <div className="absolute bottom-3 left-3 flex items-center justify-between z-10 pointer-events-none">
@@ -1495,7 +1529,7 @@ const ImageGenerator: React.FC<ImageGeneratorProps> = ({ isSettingsOpen = false,
                             type="text" 
                             value={batchVariationPrompt}
                             onChange={(e) => setBatchVariationPrompt(e.target.value)}
-                            placeholder="Örn: karlı bir günde, neon ışıklar altında..."
+                            placeholder="Boş bırakırsanız orijinal prompt kullanılır"
                             className="flex-1 bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-purple-500"
                             autoFocus
                         />

@@ -1,19 +1,22 @@
-import React, { useState, useRef, useCallback } from 'react';
+
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { RobotIcon, UploadCloudIcon, LoaderIcon, StarIcon, ThumbsDownIcon, ThumbsUpIcon, ZapIcon, ImageIcon, XIcon, WandIcon, AlertCircleIcon, CheckSquareIcon, DownloadIcon, SettingsIcon } from './Icons';
-import { analyzeImage, generateImage } from '../services/geminiService';
+import { analyzeImage, generateImage, getSettingsAdvice } from '../services/geminiService';
 import { AICriticAnalysis, GeneratedImage, User, CriticPersona, AnalysisDepth } from '../types';
 
 interface AICriticProps {
     user: User | null;
     isSettingsOpen?: boolean;
     onSettingsClose?: () => void;
+    initialMessage?: string;
 }
 
-const AICritic: React.FC<AICriticProps> = ({ user, isSettingsOpen = false, onSettingsClose = () => {} }) => {
+const AICritic: React.FC<AICriticProps> = ({ user, isSettingsOpen = false, onSettingsClose = () => {}, initialMessage }) => {
   const [image, setImage] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isFixing, setIsFixing] = useState(false);
   const [analysis, setAnalysis] = useState<AICriticAnalysis | null>(null);
+  const [textAdvice, setTextAdvice] = useState<string | null>(null); // For text-only advice
   const [fixedImage, setFixedImage] = useState<GeneratedImage | null>(null);
   const [chatInput, setChatInput] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -31,6 +34,13 @@ const AICritic: React.FC<AICriticProps> = ({ user, isSettingsOpen = false, onSet
 
   const canInteract = user?.role === 'admin' || user?.role === 'editor';
 
+  // Handle Initial Message (from Generator)
+  useEffect(() => {
+    if (initialMessage && canInteract) {
+        handleTextConsultation(initialMessage);
+    }
+  }, [initialMessage]);
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!canInteract) return;
     const file = e.target.files?.[0];
@@ -44,6 +54,7 @@ const AICritic: React.FC<AICriticProps> = ({ user, isSettingsOpen = false, onSet
         if (event.target?.result) {
           setImage(event.target.result as string);
           setAnalysis(null);
+          setTextAdvice(null);
           setFixedImage(null);
           setError(null);
           setActiveTab('compare'); // Default to compare to show the 'Start' button on right
@@ -90,8 +101,14 @@ const AICritic: React.FC<AICriticProps> = ({ user, isSettingsOpen = false, onSet
          return;
      }
 
+     // If no image, treat as text consultation
      if (!image) {
-         fileInputRef.current?.click();
+         if (!chatInput.trim()) {
+             fileInputRef.current?.click();
+             return;
+         }
+         await handleTextConsultation(chatInput);
+         setChatInput('');
          return;
      }
 
@@ -109,10 +126,27 @@ const AICritic: React.FC<AICriticProps> = ({ user, isSettingsOpen = false, onSet
      }
   };
 
+  const handleTextConsultation = async (text: string) => {
+      setIsAnalyzing(true);
+      setError(null);
+      setTextAdvice(null);
+      setAnalysis(null);
+      
+      try {
+          const advice = await getSettingsAdvice(text);
+          setTextAdvice(advice);
+      } catch (err: any) {
+          setError(err.message || "Tavsiye alınamadı.");
+      } finally {
+          setIsAnalyzing(false);
+      }
+  };
+
   const startAnalysis = async (userInstruction?: string) => {
     if (!image) return;
     setIsAnalyzing(true);
     setError(null);
+    setTextAdvice(null);
     setActiveTab('compare'); 
     try {
       // Pass configuration settings
@@ -174,10 +208,28 @@ const AICritic: React.FC<AICriticProps> = ({ user, isSettingsOpen = false, onSet
   const clearAll = () => {
       setImage(null);
       setAnalysis(null);
+      setTextAdvice(null);
       setFixedImage(null);
       setChatInput('');
       setError(null);
       setActiveTab('original');
+  };
+
+  const getPersonaLabel = (p: CriticPersona) => {
+      switch(p) {
+          case 'strict': return 'Katı';
+          case 'gentle': return 'Nazik';
+          case 'roast': return 'Roast';
+          default: return 'Dengeli';
+      }
+  };
+
+  const getDepthLabel = (d: AnalysisDepth) => {
+      switch(d) {
+          case 'brief': return 'Özet';
+          case 'technical': return 'Teknik';
+          default: return 'Detaylı';
+      }
   };
 
   return (
@@ -194,7 +246,7 @@ const AICritic: React.FC<AICriticProps> = ({ user, isSettingsOpen = false, onSet
           <div className="relative w-full max-w-md bg-surface border border-white/10 rounded-2xl p-6 shadow-2xl transform transition-all animate-in fade-in zoom-in duration-300">
              <div className="flex items-center justify-between mb-6 border-b border-white/5 pb-4">
                  <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                     <RobotIcon className="w-6 h-6 text-indigo-400" />
+                     <SettingsIcon className="w-6 h-6 text-indigo-400" />
                      AI Analiz Ayarları
                  </h2>
                  <button onClick={onSettingsClose} className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
@@ -208,10 +260,10 @@ const AICritic: React.FC<AICriticProps> = ({ user, isSettingsOpen = false, onSet
                      <label className="block text-sm font-bold text-slate-300 mb-3 uppercase tracking-wider">Eleştirmen Kişiliği</label>
                      <div className="grid grid-cols-2 gap-3">
                          {[
-                             { id: 'strict', label: 'Katı & Mükemmeliyetçi', desc: 'En ufak hatayı bile affetmez.' },
-                             { id: 'balanced', label: 'Dengeli (Varsayılan)', desc: 'Objektif ve profesyonel yaklaşım.' },
-                             { id: 'gentle', label: 'Nazik & Yapıcı', desc: 'Motivasyon odaklı, nazik düzeltmeler.' },
-                             { id: 'roast', label: 'Mizahi (Roast)', desc: 'Eğlenceli ve iğneleyici eleştiriler.' },
+                             { id: 'strict', label: 'Katı & Mükemmeliyetçi', desc: 'Hatalara odaklanır.' },
+                             { id: 'balanced', label: 'Dengeli (Varsayılan)', desc: 'Objektif yaklaşım.' },
+                             { id: 'gentle', label: 'Nazik & Yapıcı', desc: 'Motivasyon odaklı.' },
+                             { id: 'roast', label: 'Mizahi (Roast)', desc: 'İğneleyici eleştiri.' },
                          ].map((p) => (
                              <button
                                 key={p.id}
@@ -283,38 +335,47 @@ const AICritic: React.FC<AICriticProps> = ({ user, isSettingsOpen = false, onSet
              <div>
                  <h2 className="text-lg font-bold text-white flex items-center gap-2">
                      <RobotIcon className="w-5 h-5 text-indigo-400" />
-                     AI Analiz Raporu
+                     {textAdvice ? "AI Asistanı" : "AI Analiz Raporu"}
                  </h2>
                  <p className="text-xs text-slate-500 mt-1">Gemini 2.5 Vision Engine</p>
              </div>
          </div>
 
          <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
-             {!image ? (
+             {(!image && !textAdvice) ? (
                  <div className="flex flex-col items-center justify-center h-full text-center opacity-40 space-y-4">
                      <WandIcon className="w-12 h-12 text-indigo-300" />
-                     <p className="text-sm text-slate-300 px-4">Bir görsel yükleyin, yapay zeka onu incelesin ve profesyonelce düzenlesin.</p>
+                     <p className="text-sm text-slate-300 px-4">Bir görsel yükleyin veya aşağıdaki sohbet alanından aklınızdaki fikri sorun.</p>
+                 </div>
+             ) : (isAnalyzing && !analysis && !textAdvice) ? (
+                  <div className="flex flex-col items-center justify-center h-40 space-y-3 animate-pulse">
+                      <LoaderIcon className="w-8 h-8 text-indigo-500 animate-spin" />
+                      <p className="text-xs text-indigo-300">Yapay zeka düşünüyor...</p>
+                  </div>
+             ) : textAdvice ? (
+                 /* Text Advice View */
+                 <div className="space-y-4 animate-in slide-in-from-left-4">
+                     <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-xl p-4">
+                         <h3 className="text-xs font-bold text-indigo-300 uppercase tracking-wider mb-2 flex items-center gap-2">
+                            <ZapIcon className="w-4 h-4" /> Tavsiye
+                         </h3>
+                         <div className="text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">
+                            {textAdvice}
+                         </div>
+                     </div>
                  </div>
              ) : !analysis ? (
                  <div className="flex flex-col items-center justify-center h-40 space-y-3 animate-pulse">
-                     {isAnalyzing ? (
-                         <>
-                            <LoaderIcon className="w-8 h-8 text-indigo-500 animate-spin" />
-                            <p className="text-xs text-indigo-300">Görsel taranıyor...</p>
-                         </>
-                     ) : (
-                         <div className="text-center space-y-3 w-full">
-                             <div className="text-xs text-slate-400 bg-white/5 px-3 py-1 rounded-full inline-block mb-2">Bekleniyor</div>
-                             
-                             <button 
-                                onClick={() => startAnalysis()}
-                                className="w-full py-2 px-4 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-indigo-500/20 transition-all animate-pulse hover:animate-none"
-                             >
-                                Analizi Başlat
-                             </button>
-                             <p className="text-[10px] text-slate-500">veya aşağıdan talimat yazın</p>
-                         </div>
-                     )}
+                     {/* Waiting state for image analysis */}
+                     <div className="text-center space-y-3 w-full">
+                         <div className="text-xs text-slate-400 bg-white/5 px-3 py-1 rounded-full inline-block mb-2">Bekleniyor</div>
+                         <button 
+                            onClick={() => startAnalysis()}
+                            className="w-full py-2 px-4 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-indigo-500/20 transition-all animate-pulse hover:animate-none"
+                         >
+                            Analizi Başlat
+                         </button>
+                     </div>
                  </div>
              ) : (
                  <div className="space-y-6 animate-in slide-in-from-left-4 duration-500">
@@ -330,8 +391,10 @@ const AICritic: React.FC<AICriticProps> = ({ user, isSettingsOpen = false, onSet
                                  <StarIcon key={i} className={`w-4 h-4 ${i < Math.round(analysis.score / 2) ? 'text-yellow-400 fill-yellow-400' : 'text-slate-600'}`} />
                              ))}
                          </div>
-                         <div className="mt-3 text-[10px] text-indigo-300/60 uppercase tracking-wide font-bold border-t border-white/5 pt-2">
-                             {persona === 'strict' ? 'Katı Mod' : persona === 'gentle' ? 'Nazik Mod' : persona === 'roast' ? 'Roast Mod' : 'Dengeli Mod'}
+                         <div className="mt-3 flex items-center justify-center gap-2 text-[10px] text-indigo-300/60 uppercase tracking-wide font-bold border-t border-white/5 pt-2">
+                             <span>{getPersonaLabel(persona)}</span>
+                             <span className="text-white/20">•</span>
+                             <span>{getDepthLabel(depth)}</span>
                          </div>
                      </div>
 
@@ -427,14 +490,20 @@ const AICritic: React.FC<AICriticProps> = ({ user, isSettingsOpen = false, onSet
              
              {!image ? (
                  <div className="text-center space-y-4 max-w-md">
-                     <button 
-                        onClick={() => fileInputRef.current?.click()}
-                        className="px-8 py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-bold shadow-xl shadow-indigo-500/20 transition-all hover:scale-105 flex items-center gap-3 mx-auto"
-                     >
-                         <UploadCloudIcon className="w-6 h-6" />
-                         Görsel Yükle
-                     </button>
-                     <p className="text-xs text-slate-500">veya sürükleyip bırakın</p>
+                     {textAdvice ? (
+                        <div className="w-24 h-24 bg-indigo-500/20 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
+                            <RobotIcon className="w-12 h-12 text-indigo-400" />
+                        </div>
+                     ) : (
+                        <button 
+                            onClick={() => fileInputRef.current?.click()}
+                            className="px-8 py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-bold shadow-xl shadow-indigo-500/20 transition-all hover:scale-105 flex items-center gap-3 mx-auto"
+                        >
+                            <UploadCloudIcon className="w-6 h-6" />
+                            Görsel Yükle
+                        </button>
+                     )}
+                     <p className="text-xs text-slate-500">{textAdvice ? "Yapay zeka ayarlarınızı inceliyor..." : "veya aşağıdan sohbeti kullanın"}</p>
                  </div>
              ) : (
                  <div className="relative w-full h-full flex items-center justify-center">
@@ -541,22 +610,22 @@ const AICritic: React.FC<AICriticProps> = ({ user, isSettingsOpen = false, onSet
                     onChange={(e) => setChatInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleSend()}
                     disabled={!canInteract}
-                    placeholder={!image ? "Önce bir görsel yükleyin..." : fixedImage ? "Sonucu beğenmedin mi? Örn: 'Daha parlak yap'" : "Sohbet ederek başlat... (Örn: 'Renkleri düzelt')"}
+                    placeholder={!image ? "Bir şey sor... (Örn: 'Cyberpunk için hangi renkler?')" : fixedImage ? "Sonucu beğenmedin mi? Örn: 'Daha parlak yap'" : "Sohbet ederek başlat... (Örn: 'Renkleri düzelt')"}
                     className="flex-1 bg-transparent border-none outline-none text-white text-sm placeholder-slate-400 px-2"
                     autoComplete="off"
                 />
 
                 <button 
                     onClick={handleSend}
-                    disabled={!image || !canInteract}
+                    disabled={(!image && !chatInput.trim()) || !canInteract}
                     className={`
                         px-6 py-3 rounded-xl font-bold text-xs flex items-center gap-2 transition-all
-                        ${image && canInteract
+                        ${(image || chatInput.trim()) && canInteract
                             ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20' 
                             : 'bg-slate-800 text-slate-600 cursor-not-allowed'}
                     `}
                 >
-                    {fixedImage ? 'Düzenle' : 'Analiz Et'}
+                    {fixedImage ? 'Düzenle' : (image ? 'Analiz Et' : 'Gönder')}
                     {fixedImage ? <WandIcon className="w-4 h-4" /> : <ZapIcon className="w-4 h-4" />}
                 </button>
              </div>

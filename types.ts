@@ -1,3 +1,4 @@
+
 export interface GeneratedImage {
   base64: string;
   mimeType: string;
@@ -61,7 +62,38 @@ export type ColorTone = 'none' | 'vibrant' | 'bw' | 'sepia' | 'pastel' | 'muted'
 export type Composition = 'none' | 'symmetrical' | 'golden-ratio' | 'rule-of-thirds' | 'minimalist' | 'centered' | 'chaotic' | 'framed';
 export type Mood = 'none' | 'happy' | 'dark' | 'mysterious' | 'peaceful' | 'energetic' | 'melancholic' | 'romantic' | 'eerie';
 
-// AI Model Types - Removed Imagen 3 and Gemini Pro
+// Music & Cover Art Types
+export type MusicGenre = 'none' | 'pop' | 'rock' | 'hiphop' | 'electronic' | 'jazz' | 'classical' | 'lofi' | 'metal' | 'indie' | 'rnb';
+export type CoverStyle = 'none' | 'minimalist' | 'grunge' | 'retro' | 'abstract' | 'photographic' | 'illustration' | '3d-render' | 'collage' | 'psychedelic';
+
+export const MUSIC_GENRES: { value: MusicGenre; label: string }[] = [
+    { value: 'none', label: 'Otomatik Algıla' },
+    { value: 'pop', label: 'Pop' },
+    { value: 'rock', label: 'Rock / Alternative' },
+    { value: 'hiphop', label: 'Hip Hop / Rap' },
+    { value: 'electronic', label: 'Elektronik / EDM' },
+    { value: 'lofi', label: 'Lo-Fi / Chill' },
+    { value: 'metal', label: 'Metal / Hardcore' },
+    { value: 'jazz', label: 'Caz / Blues' },
+    { value: 'classical', label: 'Klasik / Orkestral' },
+    { value: 'indie', label: 'Indie / Folk' },
+    { value: 'rnb', label: 'R&B / Soul' },
+];
+
+export const COVER_STYLES: { value: CoverStyle; label: string }[] = [
+    { value: 'none', label: 'Otomatik (AI Kararı)' },
+    { value: 'minimalist', label: 'Minimalist & Temiz' },
+    { value: 'grunge', label: 'Grunge & Dokulu' },
+    { value: 'retro', label: 'Retro / 80s / Synthwave' },
+    { value: 'abstract', label: 'Soyut & Sanatsal' },
+    { value: 'photographic', label: 'Fotografik & Gerçekçi' },
+    { value: 'illustration', label: 'İllüstrasyon / Çizim' },
+    { value: '3d-render', label: '3D Render / Sürreal' },
+    { value: 'collage', label: 'Kolaj / Mixed Media' },
+    { value: 'psychedelic', label: 'Psikedelik / Renkli' },
+];
+
+// AI Model Types
 export type AIModel = 'gemini-flash' | 'gemini-lite';
 
 export const AI_MODELS: { value: AIModel; label: string; description: string; icon: string }[] = [
