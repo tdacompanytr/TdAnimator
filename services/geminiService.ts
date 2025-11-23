@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 import { AspectRatio, AIModel, AICriticAnalysis, CriticPersona, AnalysisDepth } from "../types";
 
@@ -36,9 +37,18 @@ export const generateImage = async (
       // Extract pure base64 if it contains the data URL prefix
       const base64Data = referenceImageBase64.replace(/^data:image\/\w+;base64,/, "");
       
-      // Force the model to generate an image instead of chatting about the reference
-      // Append a strong directive to the prompt
-      const finalPrompt = `${prompt} . Generate a high-quality image based on this reference. Do NOT provide text output, provide IMAGE output.`;
+      // Force the model to prioritize the reference image structure
+      const finalPrompt = `
+      TASK: Image-to-Image Transformation.
+      
+      STRICT INSTRUCTION:
+      1. You MUST PRESERVE the main subject, composition, geometry, and structure of the attached Reference Image.
+      2. Do NOT hallucinate new subjects. If the image shows a person, keep that person. If it shows a car, keep that car.
+      3. Apply the ARTISTIC STYLE, LIGHTING, and MOOD described in the prompt to the Reference Image.
+      
+      STYLE PROMPT: "${prompt}"
+      
+      OUTPUT: A high-quality image file. Do NOT provide text output.`;
 
       const response = await ai.models.generateContent({
         model: model,
@@ -438,4 +448,63 @@ export const analyzeImage = async (
     console.error("AI Analysis failed", error);
     throw new Error("Yapay zeka analizi sırasında bir hata oluştu.");
   }
+};
+
+export const analyzeAudioForImage = async (
+    audioBase64: string,
+    userDescription?: string,
+    hasReferenceImage: boolean = false
+): Promise<string> => {
+    try {
+        const ai = getAiClient();
+        const base64Data = audioBase64.replace(/^data:audio\/\w+;base64,/, "");
+
+        const prompt = `
+            You are a professional Album Art Designer.
+            Listen to this audio file. Analyze its genre, mood, tempo, instrumentation, and emotional vibe.
+            
+            ${userDescription ? `USER REQUEST: The user specifically wants: "${userDescription}".` : ''}
+            
+            ${hasReferenceImage 
+              ? `**CRITICAL: The user has provided a REFERENCE IMAGE that will be used as the base. 
+                 DO NOT suggest a specific subject matter (like 'a cat', 'a car', 'a landscape') because we must keep the reference image's subject.
+                 INSTEAD, focus completely on the STYLE, ATMOSPHERE, LIGHTING, and COLOR PALETTE that matches the song.**`
+              : 'Describe the subject matter, art style, colors, and lighting for a new album cover.'}
+
+            Based on the audio, write a high-quality AI prompt.
+            
+            The prompt should include:
+            ${hasReferenceImage ? '' : '- Subject matter'}
+            - Art style (e.g. minimal, surreal, photographic, painting, cyberpunk)
+            - Color palette matching the song's mood
+            - Lighting and atmosphere
+            - Quality keywords (e.g. 4k, masterpiece, album cover art)
+            
+            OUTPUT ONLY THE RAW PROMPT TEXT. No explanations.
+        `;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: {
+                parts: [
+                    {
+                        inlineData: {
+                            mimeType: 'audio/mp3',
+                            data: base64Data
+                        }
+                    },
+                    { text: prompt }
+                ]
+            }
+        });
+
+        const text = response.text;
+        if (!text) throw new Error("Audio analysis returned empty result.");
+        
+        return text.trim();
+
+    } catch (error: any) {
+        console.error("Audio Analysis Failed:", error);
+        throw new Error("Şarkı analizi başarısız oldu: " + (error.message || "Bilinmeyen hata"));
+    }
 };

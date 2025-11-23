@@ -1,7 +1,9 @@
+
 import React, { useState, useEffect } from 'react';
 import ImageGenerator from './components/ImageGenerator';
 import AICritic from './components/AICritic';
-import { UserIcon, LogOutIcon, SettingsIcon, BrushIcon, RobotIcon, ImageIcon } from './components/Icons';
+import CoverArtGenerator from './components/CoverArtGenerator';
+import { UserIcon, LogOutIcon, SettingsIcon, BrushIcon, RobotIcon, ImageIcon, MusicIcon } from './components/Icons';
 import { setCookie, getCookie, eraseCookie } from './utils/cookieUtils';
 import { User, UserRole } from './types';
 
@@ -13,8 +15,8 @@ const App: React.FC = () => {
   const [usernameInput, setUsernameInput] = useState('');
   const [roleInput, setRoleInput] = useState<UserRole>('editor');
   
-  // View State: 'generator' or 'critic'
-  const [currentView, setCurrentView] = useState<'generator' | 'critic'>('generator');
+  // View State: 'generator' | 'critic' | 'cover-art'
+  const [currentView, setCurrentView] = useState<'generator' | 'critic' | 'cover-art'>('generator');
   
   // Global Settings State passed to Components
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -180,7 +182,7 @@ const App: React.FC = () => {
                 </div>
               </div>
 
-              {/* View Switcher (AI Critic Mode) */}
+              {/* View Switcher */}
               <div className="flex items-center bg-white/5 rounded-xl p-1 border border-white/5">
                   <button
                     onClick={() => setCurrentView('generator')}
@@ -196,22 +198,31 @@ const App: React.FC = () => {
                     <RobotIcon className="w-4 h-4" />
                     <span className="hidden sm:inline">Yapay Zeka</span>
                   </button>
+                  <button
+                    onClick={() => setCurrentView('cover-art')}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all ${currentView === 'cover-art' ? 'bg-purple-600 text-white shadow-md shadow-purple-500/20' : 'text-slate-400 hover:text-purple-400'}`}
+                  >
+                    <MusicIcon className="w-4 h-4" />
+                    <span className="hidden sm:inline">Şarkı Kapağı</span>
+                  </button>
               </div>
             </div>
 
             {/* Right Side Actions */}
             <div className="flex items-center gap-4">
-               {/* Global Settings Trigger - Now available for both views with context-aware tooltip */}
-               <button 
-                  onClick={() => setIsSettingsOpen(true)}
-                  className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all relative group"
-                  title={currentView === 'generator' ? "Görüntü Ayarları" : "AI Analiz Ayarları"}
-                >
-                  <SettingsIcon className="w-6 h-6" />
-                  <span className="absolute top-full right-0 mt-2 w-max px-2 py-1 text-xs text-white bg-surface border border-white/10 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow-xl z-50">
-                    {currentView === 'generator' ? "Görüntü Ayarları" : "AI Analiz Ayarları"}
-                  </span>
-                </button>
+               {/* Global Settings Trigger - Only show for generator and critic */}
+               {currentView !== 'cover-art' && (
+                 <button 
+                    onClick={() => setIsSettingsOpen(true)}
+                    className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all relative group"
+                    title={currentView === 'generator' ? "Görüntü Ayarları" : "AI Analiz Ayarları"}
+                  >
+                    <SettingsIcon className="w-6 h-6" />
+                    <span className="absolute top-full right-0 mt-2 w-max px-2 py-1 text-xs text-white bg-surface border border-white/10 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow-xl z-50">
+                      {currentView === 'generator' ? "Görüntü Ayarları" : "AI Analiz Ayarları"}
+                    </span>
+                  </button>
+               )}
 
               {/* User Profile Section */}
               {user && (
@@ -243,7 +254,7 @@ const App: React.FC = () => {
 
       <main className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 transition-opacity duration-500 ${isModalOpen ? 'opacity-0' : 'opacity-100'}`}>
         <div className="flex flex-col gap-8">
-          {currentView === 'generator' ? (
+          {currentView === 'generator' && (
              <>
                 <div className="text-center max-w-2xl mx-auto space-y-4 mb-4">
                   <h2 className="text-4xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-white via-slate-200 to-slate-400">
@@ -260,12 +271,18 @@ const App: React.FC = () => {
                   user={user}
                 />
              </>
-          ) : (
+          )}
+
+          {currentView === 'critic' && (
              <AICritic 
                 user={user}
                 isSettingsOpen={isSettingsOpen}
                 onSettingsClose={() => setIsSettingsOpen(false)}
              />
+          )}
+
+          {currentView === 'cover-art' && (
+             <CoverArtGenerator user={user} />
           )}
         </div>
       </main>
