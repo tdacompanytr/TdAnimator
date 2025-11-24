@@ -1,4 +1,5 @@
 
+
 export interface GeneratedImage {
   base64: string;
   mimeType: string;
@@ -69,6 +70,45 @@ export type CoverStyle = 'none' | 'minimalist' | 'grunge' | 'retro' | 'abstract'
 // Video & Thumbnail Types
 export type VideoCategory = 'none' | 'gaming' | 'vlog' | 'tutorial' | 'review' | 'cinema' | 'music' | 'news' | 'comedy';
 export type ThumbnailStyle = 'none' | 'clickbait' | 'cinematic' | 'minimalist' | 'illustrated' | 'text-heavy' | 'reaction' | 'aesthetic';
+
+// Song / TTS Types
+export type VoiceOption = 'Puck' | 'Charon' | 'Kore' | 'Fenrir' | 'Zephyr';
+export type InstrumentOption = 'none' | 'hiphop' | 'techno' | 'cinematic' | 'lofi';
+export type VocalPreset = 'studio' | 'radio' | 'echo' | 'robot' | 'concert';
+export type SongDuration = 'short' | 'medium' | 'long';
+
+export interface MixerSettings {
+    vocalVolume: number; // 0.0 to 1.5
+    musicVolume: number; // 0.0 to 1.2
+    masterSpeed: number; // 0.5 to 2.0 (playback rate)
+    masterPitch: number; // -1200 to 1200 (cents)
+    stereoWidth: number; // 0 to 1 (Stereo expansion)
+    sidechain: number; // 0 to 1 (Compression amount)
+}
+
+export const VOICE_OPTIONS: { value: VoiceOption; label: string; desc: string }[] = [
+    { value: 'Puck', label: 'Puck (Tenor/Enerjik)', desc: 'Yumuşak, orta tonlu, anlatıcı.' },
+    { value: 'Charon', label: 'Charon (Bas/Derin)', desc: 'Derin, otoriter, sert tonlu.' },
+    { value: 'Kore', label: 'Kore (Soprano/Sakin)', desc: 'Yumuşak, kadınsı, sakinleştirici.' },
+    { value: 'Fenrir', label: 'Fenrir (Bariton/Güçlü)', desc: 'Güçlü, agresif, tok ses.' },
+    { value: 'Zephyr', label: 'Zephyr (Alto/Dengeli)', desc: 'Dengeli, modern, kadınsı.' },
+];
+
+export const VOCAL_PRESETS: { value: VocalPreset; label: string; desc: string }[] = [
+    { value: 'studio', label: 'Stüdyo (Clean)', desc: 'Temiz, profesyonel kayıt.' },
+    { value: 'radio', label: 'Radyo / Telefon', desc: 'Lo-Fi, bant genişliği kısıtlı.' },
+    { value: 'echo', label: 'Uzay (Echo)', desc: 'Derin ve uzun yankılar.' },
+    { value: 'robot', label: 'Robotik', desc: 'Metalik, modüle edilmiş ses.' },
+    { value: 'concert', label: 'Konser Hall', desc: 'Geniş atmosfer, reverb.' },
+];
+
+export const INSTRUMENT_OPTIONS: { value: InstrumentOption; label: string; desc: string }[] = [
+    { value: 'none', label: 'Yok (Sadece Vokal)', desc: 'Saf vokal kaydı.' },
+    { value: 'hiphop', label: 'Hip Hop Beat', desc: 'Güçlü Kick ve Snare ritmi.' },
+    { value: 'techno', label: 'Tekno / Elektronik', desc: 'Hızlı tempo, elektronik vuruşlar.' },
+    { value: 'lofi', label: 'Lo-Fi Chill', desc: 'Yavaş, rahatlatıcı ritim.' },
+    { value: 'cinematic', label: 'Sinematik / Gerilim', desc: 'Derin bas ve atmosferik vuruşlar.' },
+];
 
 export const VIDEO_CATEGORIES: { value: VideoCategory; label: string }[] = [
     { value: 'none', label: 'Otomatik Algıla' },

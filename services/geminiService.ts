@@ -1,6 +1,8 @@
 
+
+
 import { GoogleGenAI, Modality, Type } from "@google/genai";
-import { AspectRatio, AIModel, AICriticAnalysis, CriticPersona, AnalysisDepth, MusicGenre, CoverStyle, VideoCategory, ThumbnailStyle } from "../types";
+import { AspectRatio, AIModel, AICriticAnalysis, CriticPersona, AnalysisDepth, MusicGenre, CoverStyle, VideoCategory, ThumbnailStyle, VoiceOption } from "../types";
 
 // Initialize the client
 const getAiClient = () => {
@@ -9,6 +11,69 @@ const getAiClient = () => {
     throw new Error("API_KEY ortam değişkeni ayarlanmamış. Lütfen API anahtarınızı kontrol edin.");
   }
   return new GoogleGenAI({ apiKey });
+};
+
+// --- Audio Helper Functions ---
+const writeString = (view: DataView, offset: number, string: string) => {
+  for (let i = 0; i < string.length; i++) {
+    view.setUint8(offset + i, string.charCodeAt(i));
+  }
+};
+
+const pcmToWav = (base64PCM: string): string => {
+  const binaryString = atob(base64PCM);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+
+  // Gemini TTS defaults: 24kHz, 1 channel, 16 bit PCM
+  const sampleRate = 24000;
+  const numChannels = 1;
+  const bitsPerSample = 16;
+  
+  const blockAlign = numChannels * bitsPerSample / 8;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = len;
+  const fileSize = 36 + dataSize;
+
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  // RIFF chunk
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, fileSize, true);
+  writeString(view, 8, 'WAVE');
+  
+  // fmt chunk
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true); // Subchunk1Size (16 for PCM)
+  view.setUint16(20, 1, true); // AudioFormat (1 for PCM)
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  
+  // data chunk
+  writeString(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  // Write PCM samples
+  const pcmBytes = new Uint8Array(buffer, 44);
+  pcmBytes.set(bytes);
+
+  // Convert back to base64
+  let binary = '';
+  const bytesOut = new Uint8Array(buffer);
+  const lenOut = bytesOut.byteLength;
+  // Use a chunked approach for large strings to avoid stack overflow
+  for (let i = 0; i < lenOut; i += 1024) {
+      const chunk = bytesOut.subarray(i, Math.min(i + 1024, lenOut));
+      binary += String.fromCharCode.apply(null, Array.from(chunk));
+  }
+  return btoa(binary);
 };
 
 export interface GenerateImageResult {
@@ -484,6 +549,93 @@ export const getSettingsAdvice = async (settingsContext: string): Promise<string
     }
 };
 
+export const generateLyrics = async (topic: string, genre: string): Promise<string> => {
+    try {
+        const ai = getAiClient();
+        const prompt = `
+            You are a specialized Songwriter & Vocal Arranger AI.
+            
+            TASK: Write complete song lyrics based on the user's topic, but FORMATTED for a Text-to-Speech (TTS) engine to simulate SINGING.
+            
+            PARAMETERS:
+            - Topic/Idea: "${topic}"
+            - Music Genre: ${genre}
+            
+            **CRITICAL FORMATTING RULES (THE "SINGING" SIMULATION):**
+            Standard TTS sounds flat (like poetry). You must trick it into having rhythm and melody by using PHONETIC STRETCHING and PUNCTUATION.
+            
+            1. **Elongate Vowels:** Stretch the vowels of emotional words or words at the end of lines.
+               - "Love" -> "Loooove"
+               - "Go" -> "Gooooooo"
+               - "Fire" -> "Fyyyyy-re"
+               - "Baby" -> "Bay... beeeee"
+               
+            2. **Rhythmic Pauses:** Use "..." and "," extensively to create rhythm and pauses between beats.
+               - "Don't stop now" -> "Don't... stop... noooow..."
+               
+            3. **Structure:**
+               - [Verse 1] (Short, punchy lines)
+               - [Chorus] (Highly elongated, melodic lines)
+               - [Verse 2]
+               - [Chorus]
+               - [Outro] (Fading out: "Yeaaaah...", "Oooooh...")
+               
+            4. **Ad-libs:** Add background vocals like "Yeah!", "Uh!", "Woah!" where appropriate for the genre.
+            
+            LANGUAGE:
+            - If 'Topic' is Turkish, write in **TURKISH**. (Example: "Gidiyoruuuuum...", "Aşkkkk....", "Yalanmışşşş...")
+            - If 'Topic' is English, write in **ENGLISH**.
+            
+            EXAMPLE OUTPUT (Hip Hop):
+            "Yo... listen up...
+            I'm waaaalking down the streeeet... (yeah!)
+            Feelin' the heaaaat...
+            Can't be beaaaat... no way..."
+
+            OUTPUT:
+            Return ONLY the formatted lyrics text.
+        `;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [{ text: prompt }] }
+        });
+
+        return response.text || "Şarkı sözü oluşturulamadı.";
+    } catch (error: any) {
+        console.error("Lyrics generation failed", error);
+        throw new Error("Şarkı sözü yazılamadı.");
+    }
+};
+
+export const generateSongCoverPrompt = async (lyrics: string, genre: string): Promise<string> => {
+    try {
+        const ai = getAiClient();
+        const prompt = `
+            You are an AI Art Director.
+            Based on these lyrics and genre, describe a high-quality Album Cover Art image.
+            
+            Genre: ${genre}
+            Lyrics (Excerpt): "${lyrics.substring(0, 300)}..."
+            
+            TASK: Write a single, descriptive image prompt for an AI generator (Gemini/Imagen).
+            - Include style (e.g., Cyberpunk, Minimalist, Gothic, Pop Art).
+            - Include mood and colors.
+            - Keep it under 50 words.
+            - ENGLISH ONLY.
+        `;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [{ text: prompt }] }
+        });
+
+        return response.text || `${genre} style album cover abstract art`;
+    } catch (error) {
+        return `${genre} abstract album art`;
+    }
+};
+
 export const analyzeAudioForImage = async (
     mediaBase64: string,
     userDescription?: string,
@@ -661,5 +813,48 @@ export const analyzeVideoForThumbnail = async (
     } catch (error: any) {
         console.error("Video Thumbnail Analysis Failed:", error);
         throw new Error("Video analizi başarısız oldu: " + (error.message || "Bilinmeyen hata"));
+    }
+};
+
+export const generateSpeech = async (
+    text: string, 
+    voice: VoiceOption = 'Puck'
+): Promise<string> => {
+    try {
+        const ai = getAiClient();
+        
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash-preview-tts",
+            contents: [{ parts: [{ text: text }] }],
+            config: {
+                responseModalities: [Modality.AUDIO],
+                speechConfig: {
+                    voiceConfig: {
+                        prebuiltVoiceConfig: { voiceName: voice }
+                    }
+                }
+            }
+        });
+
+        const candidate = response.candidates?.[0];
+        if (!candidate || !candidate.content || !candidate.content.parts || candidate.content.parts.length === 0) {
+            throw new Error("Ses üretimi başarısız oldu (Boş yanıt).");
+        }
+
+        const audioPart = candidate.content.parts[0];
+        if (!audioPart.inlineData || !audioPart.inlineData.data) {
+            throw new Error("Ses verisi alınamadı.");
+        }
+
+        const rawPcmBase64 = audioPart.inlineData.data;
+        
+        // Convert the Raw PCM data to a browser-playable WAV file
+        const wavBase64 = pcmToWav(rawPcmBase64);
+
+        return wavBase64; 
+
+    } catch (error: any) {
+        console.error("Speech Generation Failed:", error);
+        throw new Error("Şarkı/Ses üretimi başarısız: " + (error.message || "Bilinmeyen hata"));
     }
 };

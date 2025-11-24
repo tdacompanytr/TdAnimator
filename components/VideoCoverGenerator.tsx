@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useCallback } from 'react';
-import { UploadCloudIcon, VideoIcon, FilmIcon, YoutubeIcon, LoaderIcon, WandIcon, DownloadIcon, XIcon, AlertCircleIcon, ImageIcon, ClapperboardIcon } from './Icons';
+import { UploadCloudIcon, VideoIcon, FilmIcon, YoutubeIcon, LoaderIcon, WandIcon, DownloadIcon, XIcon, AlertCircleIcon, ImageIcon, ClapperboardIcon, SparklesIcon } from './Icons';
 import { analyzeVideoForThumbnail, generateImage } from '../services/geminiService';
 import { User, VideoCategory, ThumbnailStyle, VIDEO_CATEGORIES, THUMBNAIL_STYLES } from '../types';
 
@@ -25,8 +25,62 @@ const VideoCoverGenerator: React.FC<VideoCoverGeneratorProps> = ({ user }) => {
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
+  // Refine States
+  const [showRefineInput, setShowRefineInput] = useState(false);
+  const [refinePrompt, setRefinePrompt] = useState('');
+  const [isRefining, setIsRefining] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canInteract = user?.role === 'admin' || user?.role === 'editor';
+
+  // --- Helper Function: Compress Image to < 2MB ---
+  const compressImageTo2MB = (base64Str: string): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        // Calculate approximate size in bytes
+        const getSizeInBytes = (str: string) => {
+            const padding = (str.match(/=+$/) || [''])[0].length;
+            return (str.length * 3 / 4) - padding;
+        };
+
+        const originalSize = getSizeInBytes(base64Str.split(',')[1]);
+        const LIMIT = 2 * 1024 * 1024; // 2MB in bytes
+
+        // If already smaller than 2MB, return as is
+        if (originalSize <= LIMIT) {
+            resolve(base64Str);
+            return;
+        }
+
+        const img = new Image();
+        img.src = base64Str;
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            
+            if (!ctx) {
+                resolve(base64Str); // Fallback
+                return;
+            }
+
+            ctx.drawImage(img, 0, 0);
+
+            // Start compressing
+            let quality = 0.9;
+            let newBase64 = canvas.toDataURL('image/jpeg', quality);
+            
+            // Loop until size is acceptable or quality is too low
+            while (getSizeInBytes(newBase64.split(',')[1]) > LIMIT && quality > 0.1) {
+                quality -= 0.1;
+                newBase64 = canvas.toDataURL('image/jpeg', quality);
+            }
+
+            resolve(newBase64);
+        };
+        img.onerror = (e) => reject(e);
+    });
+  };
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -62,8 +116,11 @@ const VideoCoverGenerator: React.FC<VideoCoverGeneratorProps> = ({ user }) => {
   };
 
   const processMediaFile = (file: File) => {
-    if (file.size > 50 * 1024 * 1024) { // 50MB Limit
-        setError("Dosya boyutu 50MB'dan küçük olmalıdır.");
+    // Limit increased to 10GB as requested
+    const MAX_SIZE = 10 * 1024 * 1024 * 1024; 
+
+    if (file.size > MAX_SIZE) { 
+        setError("Dosya boyutu 10GB'dan küçük olmalıdır.");
         return;
     }
     setMediaFile(file);
@@ -84,6 +141,7 @@ const VideoCoverGenerator: React.FC<VideoCoverGeneratorProps> = ({ user }) => {
     
     setIsProcessing(true);
     setError(null);
+    setShowRefineInput(false);
     
     try {
         setProcessingStep('analyzing');
@@ -94,27 +152,34 @@ const VideoCoverGenerator: React.FC<VideoCoverGeneratorProps> = ({ user }) => {
             try {
                 const base64Media = reader.result as string;
                 
+                // Analyze Video
                 const analysisResult = await analyzeVideoForThumbnail(
                     base64Media, 
                     userPrompt, 
-                    selectedCategory, 
+                    selectedCategory,
                     selectedStyle,
-                    mediaFile.type 
+                    mediaFile.type // e.g. video/mp4
                 );
                 
                 setGeneratedPrompt(analysisResult.descriptionTR);
 
+                // Generate Image
                 setProcessingStep('generating');
                 const result = await generateImage(
                     analysisResult.prompt, 
-                    aspectRatio, 
+                    aspectRatio, // 16:9 or 9:16
                     'image/jpeg', 
                     undefined, 
                     undefined, 
                     'gemini-flash'
                 );
                 
-                setGeneratedCover(`data:${result.mimeType};base64,${result.imageBytes}`);
+                const rawBase64 = `data:${result.mimeType};base64,${result.imageBytes}`;
+                
+                // Compress to ensure < 2MB for YouTube
+                const compressedBase64 = await compressImageTo2MB(rawBase64);
+                
+                setGeneratedCover(compressedBase64);
                 
             } catch (err: any) {
                 setError(err.message || "İşlem sırasında bir hata oluştu.");
@@ -134,6 +199,38 @@ const VideoCoverGenerator: React.FC<VideoCoverGeneratorProps> = ({ user }) => {
     }
   };
 
+  const handleRefine = async () => {
+    if (!generatedCover || !refinePrompt.trim() || !canInteract) return;
+
+    setIsRefining(true);
+    setError(null);
+
+    try {
+        const result = await generateImage(
+            refinePrompt,
+            aspectRatio, // Use current aspect ratio
+            'image/jpeg', 
+            generatedCover, // Use current image as reference
+            undefined, 
+            'gemini-flash'
+        );
+
+        const rawBase64 = `data:${result.mimeType};base64,${result.imageBytes}`;
+        
+        // Compress to ensure < 2MB for YouTube
+        const compressedBase64 = await compressImageTo2MB(rawBase64);
+
+        setGeneratedCover(compressedBase64);
+        setShowRefineInput(false);
+        setRefinePrompt('');
+        setGeneratedPrompt(`(Düzenlendi) ${refinePrompt}`);
+    } catch (err: any) {
+        setError(err.message || "Düzenleme sırasında hata oluştu.");
+    } finally {
+        setIsRefining(false);
+    }
+  };
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 h-full min-h-[600px]">
         {/* LEFT PANEL: Input */}
@@ -143,12 +240,12 @@ const VideoCoverGenerator: React.FC<VideoCoverGeneratorProps> = ({ user }) => {
                     <VideoIcon className="w-6 h-6" />
                 </div>
                 <div>
-                    <h2 className="text-xl font-bold text-white">Video Kapağı / Thumbnail</h2>
-                    <p className="text-sm text-slate-400">Videonu yükle, dikkat çekici bir kapak tasarla.</p>
+                    <h2 className="text-xl font-bold text-white">Video Kapağı (Thumbnail)</h2>
+                    <p className="text-sm text-slate-400">Videonu yükle, en ilgi çekici anı yakalayalım.</p>
                 </div>
             </div>
 
-            {/* Video Upload Area */}
+            {/* Media Upload Area */}
             <div 
                 className={`
                     border-2 border-dashed rounded-2xl transition-all flex flex-col items-center justify-center p-6 relative overflow-hidden group min-h-[200px]
@@ -164,8 +261,8 @@ const VideoCoverGenerator: React.FC<VideoCoverGeneratorProps> = ({ user }) => {
                             <UploadCloudIcon className="w-8 h-8 text-red-400" />
                         </div>
                         <div>
-                            <p className="text-base font-bold text-white">MP4 Videosunu Sürükle</p>
-                            <p className="text-xs text-slate-500 mt-1">veya bilgisayarından seç (Max 50MB)</p>
+                            <p className="text-base font-bold text-white">Video Dosyasını Sürükle (MP4)</p>
+                            <p className="text-xs text-slate-500 mt-1">veya bilgisayarından seç (Max 10GB)</p>
                         </div>
                         <input 
                             type="file" 
@@ -184,19 +281,23 @@ const VideoCoverGenerator: React.FC<VideoCoverGeneratorProps> = ({ user }) => {
                     </div>
                 ) : (
                     <div className="w-full h-full flex flex-col items-center justify-center gap-3 relative z-10">
-                        <div className="w-full max-w-xs aspect-video bg-black rounded-lg overflow-hidden border border-white/10 relative shadow-xl">
-                            {mediaSrc && (
-                                <video src={mediaSrc} controls className="w-full h-full object-cover" />
-                            )}
+                        <div className="w-16 h-16 bg-gradient-to-br from-red-500 to-orange-600 rounded-full flex items-center justify-center shadow-2xl animate-pulse">
+                            <FilmIcon className="w-8 h-8 text-white" />
                         </div>
                         <div className="text-center">
                             <p className="text-white font-bold text-sm truncate max-w-xs">{mediaFile.name}</p>
                             <p className="text-slate-400 text-[10px]">{(mediaFile.size / 1024 / 1024).toFixed(2)} MB</p>
                         </div>
+                        
+                        {mediaSrc && (
+                            <div className="mt-2 w-full max-w-xs flex justify-center">
+                                <video src={mediaSrc} controls className="h-24 rounded-lg border border-white/10" />
+                            </div>
+                        )}
 
                         <button 
                             onClick={removeFile}
-                            className="absolute top-2 right-2 p-2 bg-red-500/80 text-white rounded-lg hover:bg-red-600 transition-colors shadow-lg"
+                            className="absolute top-0 right-0 p-2 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-colors"
                             title="Dosyayı Kaldır"
                         >
                             <XIcon className="w-4 h-4" />
@@ -205,8 +306,9 @@ const VideoCoverGenerator: React.FC<VideoCoverGeneratorProps> = ({ user }) => {
                 )}
             </div>
 
-            {/* Settings */}
+            {/* Settings Grid */}
             <div className="grid grid-cols-2 gap-4">
+                {/* Category Selection */}
                 <div>
                     <label className="block text-xs font-medium text-slate-400 mb-1.5">Video Kategorisi</label>
                     <div className="relative">
@@ -220,10 +322,15 @@ const VideoCoverGenerator: React.FC<VideoCoverGeneratorProps> = ({ user }) => {
                                 <option key={c.value} value={c.value}>{c.label}</option>
                             ))}
                         </select>
+                        <div className="absolute right-3 top-2.5 pointer-events-none text-slate-500">
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>
+                        </div>
                     </div>
                 </div>
+
+                {/* Style Selection */}
                 <div>
-                    <label className="block text-xs font-medium text-slate-400 mb-1.5">Kapak Stili</label>
+                    <label className="block text-xs font-medium text-slate-400 mb-1.5">Thumbnail Stili</label>
                     <div className="relative">
                         <select 
                             value={selectedStyle}
@@ -235,40 +342,43 @@ const VideoCoverGenerator: React.FC<VideoCoverGeneratorProps> = ({ user }) => {
                                 <option key={s.value} value={s.value}>{s.label}</option>
                             ))}
                         </select>
+                        <div className="absolute right-3 top-2.5 pointer-events-none text-slate-500">
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>
+                        </div>
                     </div>
                 </div>
             </div>
-
-             {/* Aspect Ratio Toggle */}
+            
+            {/* Format Selection (16:9 vs 9:16) */}
              <div>
-                <label className="block text-xs font-medium text-slate-400 mb-2">Kapak Formatı</label>
-                <div className="flex bg-darker rounded-lg p-1 border border-white/10 w-fit">
-                    <button 
+                <label className="block text-xs font-medium text-slate-400 mb-2">Video Formatı</label>
+                <div className="grid grid-cols-2 gap-2">
+                    <button
                         onClick={() => setAspectRatio('16:9')}
-                        className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${aspectRatio === '16:9' ? 'bg-red-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                        className={`p-2 rounded-lg text-xs font-bold border transition-all flex items-center justify-center gap-2 ${aspectRatio === '16:9' ? 'bg-red-600/20 border-red-500 text-white' : 'bg-darker border-white/10 text-slate-400'}`}
                     >
-                        Yatay (16:9)
+                        <YoutubeIcon className="w-4 h-4" /> Yatay (YouTube)
                     </button>
-                    <button 
+                    <button
                         onClick={() => setAspectRatio('9:16')}
-                        className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${aspectRatio === '9:16' ? 'bg-red-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                        className={`p-2 rounded-lg text-xs font-bold border transition-all flex items-center justify-center gap-2 ${aspectRatio === '9:16' ? 'bg-red-600/20 border-red-500 text-white' : 'bg-darker border-white/10 text-slate-400'}`}
                     >
-                        Dikey / Shorts (9:16)
+                        <div className="w-3 h-5 border-2 border-current rounded-sm"></div> Dikey (Shorts/Reels)
                     </button>
                 </div>
             </div>
 
-            {/* Details Input */}
-            <div className="flex-1">
+            {/* Description Input */}
+            <div className="flex-1 min-h-[100px]">
                 <label className="block text-sm font-medium text-slate-300 mb-2">
-                    Kapak Detayları (Opsiyonel)
+                    Ek Detaylar (Opsiyonel)
                 </label>
                 <textarea 
                     value={userPrompt}
                     onChange={(e) => setUserPrompt(e.target.value)}
-                    placeholder="Örn: Şaşırmış yüz ifadesi olsun, sağ tarafta patlama efekti, büyük ve parlak yazı alanı bırak..."
+                    placeholder="Örn: Videoda şaşırdığım bir an var, arka plan renkli olsun..."
                     disabled={isProcessing || !canInteract}
-                    className="w-full h-32 bg-darker border border-white/10 rounded-xl p-4 text-white placeholder-slate-500 focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none resize-none"
+                    className="w-full h-full bg-darker border border-white/10 rounded-xl p-4 text-white placeholder-slate-500 focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none resize-none"
                 />
             </div>
 
@@ -279,7 +389,7 @@ const VideoCoverGenerator: React.FC<VideoCoverGeneratorProps> = ({ user }) => {
                     w-full py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 shadow-lg transition-all
                     ${!mediaFile || isProcessing || !canInteract
                         ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                        : 'bg-red-600 hover:bg-red-500 text-white shadow-red-500/25'}
+                        : 'bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white shadow-red-500/25'}
                 `}
             >
                 {isProcessing ? (
@@ -306,11 +416,12 @@ const VideoCoverGenerator: React.FC<VideoCoverGeneratorProps> = ({ user }) => {
         {/* RIGHT PANEL: Output */}
         <div className="bg-black/20 border border-white/10 rounded-2xl p-8 flex flex-col items-center justify-center relative overflow-hidden group min-h-[500px]">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-red-900/20 via-transparent to-transparent pointer-events-none"></div>
-            
+
             {generatedCover ? (
                 <div className="flex flex-col items-center w-full animate-in zoom-in duration-500">
                     
-                    <div className={`relative w-full max-w-xl shadow-2xl rounded-xl overflow-hidden group/cover ${aspectRatio === '9:16' ? 'max-w-sm aspect-[9/16]' : 'aspect-video'}`}>
+                    {/* Visualizer Area */}
+                    <div className={`relative w-full ${aspectRatio === '16:9' ? 'aspect-video max-w-2xl' : 'aspect-[9/16] max-w-sm'} shadow-2xl rounded-xl overflow-hidden group/cover`}>
                         <img src={generatedCover} alt="Generated Thumbnail" className="w-full h-full object-cover" />
                         
                         <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/cover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-4 backdrop-blur-sm">
@@ -327,18 +438,62 @@ const VideoCoverGenerator: React.FC<VideoCoverGeneratorProps> = ({ user }) => {
                             </button>
                         </div>
                         
-                        {/* YouTube UI Simulation Overlay (Optional Visual Flair) */}
-                        {aspectRatio === '16:9' && (
-                            <div className="absolute bottom-2 right-2 bg-black/80 text-white text-[10px] font-bold px-1.5 py-0.5 rounded opacity-80 pointer-events-none">
-                                12:45
+                        {/* Fake Youtube UI Overlay for Preview */}
+                        <div className="absolute bottom-2 right-2 bg-black/80 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+                            10:24
+                        </div>
+                    </div>
+
+                    {/* Magic Refine Toolbar */}
+                    <div className="mt-6 w-full max-w-md">
+                        {!showRefineInput ? (
+                             <button 
+                                onClick={() => setShowRefineInput(true)}
+                                disabled={isRefining || !canInteract}
+                                className="w-full py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-300 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all"
+                            >
+                                <SparklesIcon className="w-4 h-4" />
+                                AI Düzenleme Modu
+                            </button>
+                        ) : (
+                            <div className="bg-darker border border-white/20 rounded-xl p-3 animate-in fade-in slide-in-from-top-2">
+                                <div className="flex gap-2 mb-2">
+                                    <SparklesIcon className="w-4 h-4 text-purple-400 mt-0.5" />
+                                    <p className="text-xs text-slate-300 font-medium">Thumbnail üzerinde ne değiştirelim?</p>
+                                </div>
+                                <input 
+                                    type="text" 
+                                    value={refinePrompt}
+                                    onChange={(e) => setRefinePrompt(e.target.value)}
+                                    placeholder="Örn: Yazıları kaldır, daha parlak yap, patlama ekle..."
+                                    className="w-full bg-surface border border-white/10 rounded-lg p-2 text-sm text-white outline-none focus:border-red-500 mb-3"
+                                    autoFocus
+                                    onKeyDown={(e) => e.key === 'Enter' && handleRefine()}
+                                />
+                                <div className="flex justify-end gap-2">
+                                    <button 
+                                        onClick={() => setShowRefineInput(false)}
+                                        className="px-3 py-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+                                    >
+                                        İptal
+                                    </button>
+                                    <button 
+                                        onClick={handleRefine}
+                                        disabled={isRefining || !refinePrompt.trim()}
+                                        className="px-4 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-lg flex items-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {isRefining ? <LoaderIcon className="w-3 h-3 animate-spin" /> : 'Uygula'}
+                                    </button>
+                                </div>
                             </div>
                         )}
                     </div>
 
-                    <div className="mt-8 px-6 text-center w-full max-w-lg">
-                        <div className="bg-white/5 border border-white/10 rounded-xl p-4 text-left">
-                            <p className="text-xs text-red-300 uppercase tracking-widest font-bold mb-2 flex items-center gap-2">
-                                <YoutubeIcon className="w-4 h-4" /> AI Stratejisi
+                    <div className="mt-6 px-6 text-center w-full max-w-lg">
+                        <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                            <p className="text-xs text-red-300 uppercase tracking-widest font-bold mb-2 flex items-center justify-center gap-2">
+                                <ClapperboardIcon className="w-3 h-3" />
+                                AI Video Analizi
                             </p>
                             <p className="text-sm text-slate-300 leading-relaxed">{generatedPrompt}</p>
                         </div>
@@ -347,11 +502,11 @@ const VideoCoverGenerator: React.FC<VideoCoverGeneratorProps> = ({ user }) => {
             ) : (
                 <div className="text-center opacity-40 max-w-sm">
                     <div className="w-32 h-32 border-4 border-dashed border-white/20 rounded-xl mx-auto mb-6 flex items-center justify-center">
-                        <FilmIcon className="w-16 h-16 text-white/20" />
+                        <YoutubeIcon className="w-16 h-16 text-white/20" />
                     </div>
-                    <h3 className="text-2xl font-bold text-white mb-2">Henüz Kapak Yok</h3>
+                    <h3 className="text-2xl font-bold text-white mb-2">Thumbnail Hazır Değil</h3>
                     <p className="text-slate-400">
-                        Videonu yükle, YouTube veya sosyal medya için tıklanabilir bir kapak tasarla.
+                        Sol taraftan videonu yükle ve "Kapağı Oluştur" butonuna bas. Yapay zeka videonun en "tıklanabilir" anını bulup tasarlayacak.
                     </p>
                 </div>
             )}

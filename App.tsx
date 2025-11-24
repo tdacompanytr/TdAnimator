@@ -1,10 +1,13 @@
 
+
+
 import React, { useState, useEffect } from 'react';
 import ImageGenerator from './components/ImageGenerator';
 import AICritic from './components/AICritic';
 import CoverArtGenerator from './components/CoverArtGenerator';
 import VideoCoverGenerator from './components/VideoCoverGenerator';
-import { UserIcon, LogOutIcon, SettingsIcon, BrushIcon, RobotIcon, ImageIcon, MusicIcon, InfoIcon, VideoIcon } from './components/Icons';
+import SongGenerator from './components/SongGenerator';
+import { UserIcon, LogOutIcon, SettingsIcon, BrushIcon, RobotIcon, ImageIcon, MusicIcon, InfoIcon, VideoIcon, MicIcon } from './components/Icons';
 import { setCookie, getCookie, eraseCookie } from './utils/cookieUtils';
 import { User, UserRole } from './types';
 
@@ -17,7 +20,7 @@ const App: React.FC = () => {
   const [roleInput, setRoleInput] = useState<UserRole>('editor');
   
   // View State
-  const [currentView, setCurrentView] = useState<'generator' | 'critic' | 'cover-art' | 'video-cover'>('generator');
+  const [currentView, setCurrentView] = useState<'generator' | 'critic' | 'cover-art' | 'video-cover' | 'song-generator'>('generator');
   
   // Global Settings State passed to Components
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -237,6 +240,13 @@ const App: React.FC = () => {
                     <VideoIcon className="w-4 h-4" />
                     <span className="hidden sm:inline">Video Kapağı</span>
                   </button>
+                  <button
+                    onClick={() => setCurrentView('song-generator')}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${currentView === 'song-generator' ? 'bg-green-600 text-white shadow-md shadow-green-500/20' : 'text-slate-400 hover:text-green-400'}`}
+                  >
+                    <MicIcon className="w-4 h-4" />
+                    <span className="hidden sm:inline">Şarkı Yap</span>
+                  </button>
               </div>
             </div>
 
@@ -321,6 +331,10 @@ const App: React.FC = () => {
 
           {currentView === 'video-cover' && (
              <VideoCoverGenerator user={user} />
+          )}
+
+          {currentView === 'song-generator' && (
+             <SongGenerator user={user} />
           )}
         </div>
       </main>
