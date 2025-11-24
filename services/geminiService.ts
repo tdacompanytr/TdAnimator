@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Modality, Type } from "@google/genai";
-import { AspectRatio, AIModel, AICriticAnalysis, CriticPersona, AnalysisDepth, MusicGenre, CoverStyle } from "../types";
+import { AspectRatio, AIModel, AICriticAnalysis, CriticPersona, AnalysisDepth, MusicGenre, CoverStyle, VideoCategory, ThumbnailStyle } from "../types";
 
 // Initialize the client
 const getAiClient = () => {
@@ -571,5 +571,95 @@ export const analyzeAudioForImage = async (
     } catch (error: any) {
         console.error("Audio Analysis Failed:", error);
         throw new Error("Medya analizi başarısız oldu: " + (error.message || "Bilinmeyen hata"));
+    }
+};
+
+export const analyzeVideoForThumbnail = async (
+    videoBase64: string,
+    userDescription?: string,
+    category: VideoCategory = 'none',
+    style: ThumbnailStyle = 'none',
+    mimeType: string = 'video/mp4'
+): Promise<{ prompt: string; descriptionTR: string }> => {
+    try {
+        const ai = getAiClient();
+        const base64Data = videoBase64.replace(/^data:video\/\w+;base64,/, "");
+
+        const prompt = `
+            You are a Professional YouTube Thumbnail Designer and Video Analyst.
+            Analyze this video content (visuals, action, context).
+            
+            TASK: Create a viral, high-converting Thumbnail Image Prompt based on this video.
+            
+            CONTEXT:
+            - User Description: "${userDescription || 'None'}"
+            - Category: ${category !== 'none' ? category : 'Detect automatically'}
+            - Style Target: ${style !== 'none' ? style : 'High Click-Through Rate (CTR)'}
+            
+            INSTRUCTIONS:
+            1. Identify the most exciting, emotional, or visually striking moment in the video.
+            2. Design a thumbnail concept. 
+               - If 'gaming', focus on action/characters. 
+               - If 'vlog', focus on facial expressions/emotion. 
+               - If 'cinematic', focus on composition and lighting.
+            3. The prompt MUST describe a SINGLE static image.
+            
+            OUTPUTS:
+            1. "prompt": A high-quality AI image generation prompt in ENGLISH. Describe the subject, expression, lighting, background, and style (e.g. "hyper-realistic, 4k, vibrant colors, surprised face close-up").
+            2. "descriptionTR": A description of this thumbnail concept in TURKISH. Explain why this specific frame/concept was chosen to attract viewers.
+
+            OUTPUT FORMAT:
+            Return ONLY a valid JSON object with keys "prompt" and "descriptionTR".
+        `;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: {
+                parts: [
+                    {
+                        inlineData: {
+                            mimeType: mimeType,
+                            data: base64Data
+                        }
+                    },
+                    { text: prompt }
+                ]
+            },
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        prompt: { type: Type.STRING },
+                        descriptionTR: { type: Type.STRING }
+                    },
+                    required: ["prompt", "descriptionTR"]
+                }
+            }
+        });
+
+        const text = response.text;
+        if (!text) throw new Error("Video analysis returned empty result.");
+        
+        let result;
+        try {
+            const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+            result = JSON.parse(cleanText);
+        } catch (e) {
+            console.warn("JSON Parse Error, falling back to raw text", e);
+            return {
+                prompt: text.substring(0, 500),
+                descriptionTR: "Video analizi yapıldı, kapak oluşturuluyor."
+            };
+        }
+
+        return {
+            prompt: result.prompt || "YouTube thumbnail",
+            descriptionTR: result.descriptionTR || "Video analiz edildi ve kapak tasarlandı."
+        };
+
+    } catch (error: any) {
+        console.error("Video Thumbnail Analysis Failed:", error);
+        throw new Error("Video analizi başarısız oldu: " + (error.message || "Bilinmeyen hata"));
     }
 };

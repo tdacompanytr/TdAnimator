@@ -66,6 +66,32 @@ export type Mood = 'none' | 'happy' | 'dark' | 'mysterious' | 'peaceful' | 'ener
 export type MusicGenre = 'none' | 'pop' | 'rock' | 'hiphop' | 'electronic' | 'jazz' | 'classical' | 'lofi' | 'metal' | 'indie' | 'rnb';
 export type CoverStyle = 'none' | 'minimalist' | 'grunge' | 'retro' | 'abstract' | 'photographic' | 'illustration' | '3d-render' | 'collage' | 'psychedelic';
 
+// Video & Thumbnail Types
+export type VideoCategory = 'none' | 'gaming' | 'vlog' | 'tutorial' | 'review' | 'cinema' | 'music' | 'news' | 'comedy';
+export type ThumbnailStyle = 'none' | 'clickbait' | 'cinematic' | 'minimalist' | 'illustrated' | 'text-heavy' | 'reaction' | 'aesthetic';
+
+export const VIDEO_CATEGORIES: { value: VideoCategory; label: string }[] = [
+    { value: 'none', label: 'Otomatik Algıla' },
+    { value: 'gaming', label: 'Oyun / Gaming' },
+    { value: 'vlog', label: 'Vlog / Lifestyle' },
+    { value: 'tutorial', label: 'Eğitim / Nasıl Yapılır' },
+    { value: 'review', label: 'İnceleme / Teknoloji' },
+    { value: 'cinema', label: 'Sinema / Kısa Film' },
+    { value: 'music', label: 'Müzik Klibi' },
+    { value: 'comedy', label: 'Komedi / Eğlence' },
+    { value: 'news', label: 'Haber / Belgesel' },
+];
+
+export const THUMBNAIL_STYLES: { value: ThumbnailStyle; label: string }[] = [
+    { value: 'none', label: 'Otomatik (AI Kararı)' },
+    { value: 'clickbait', label: 'Yüksek Kontrast / Canlı (YouTuber)' },
+    { value: 'cinematic', label: 'Sinematik / Film Posteri' },
+    { value: 'minimalist', label: 'Minimalist & Temiz' },
+    { value: 'illustrated', label: 'Çizim / İllüstrasyon' },
+    { value: 'reaction', label: 'Tepki / Şaşkın Yüz Odaklı' },
+    { value: 'aesthetic', label: 'Estetik / Soft' },
+];
+
 export const MUSIC_GENRES: { value: MusicGenre; label: string }[] = [
     { value: 'none', label: 'Otomatik Algıla' },
     { value: 'pop', label: 'Pop' },

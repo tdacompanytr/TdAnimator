@@ -3,7 +3,8 @@ import React, { useState, useEffect } from 'react';
 import ImageGenerator from './components/ImageGenerator';
 import AICritic from './components/AICritic';
 import CoverArtGenerator from './components/CoverArtGenerator';
-import { UserIcon, LogOutIcon, SettingsIcon, BrushIcon, RobotIcon, ImageIcon, MusicIcon, InfoIcon } from './components/Icons';
+import VideoCoverGenerator from './components/VideoCoverGenerator';
+import { UserIcon, LogOutIcon, SettingsIcon, BrushIcon, RobotIcon, ImageIcon, MusicIcon, InfoIcon, VideoIcon } from './components/Icons';
 import { setCookie, getCookie, eraseCookie } from './utils/cookieUtils';
 import { User, UserRole } from './types';
 
@@ -15,8 +16,8 @@ const App: React.FC = () => {
   const [usernameInput, setUsernameInput] = useState('');
   const [roleInput, setRoleInput] = useState<UserRole>('editor');
   
-  // View State: 'generator' | 'critic' | 'cover-art'
-  const [currentView, setCurrentView] = useState<'generator' | 'critic' | 'cover-art'>('generator');
+  // View State
+  const [currentView, setCurrentView] = useState<'generator' | 'critic' | 'cover-art' | 'video-cover'>('generator');
   
   // Global Settings State passed to Components
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -188,7 +189,7 @@ const App: React.FC = () => {
                         <span className="font-bold text-primary block mb-1">Son Güncelleme:</span>
                         24 Kasım 2025
                     </p>
-                    <p className="text-[10px] text-slate-500 mt-1 pt-1 border-t border-white/5">Sürüm 1.4.0</p>
+                    <p className="text-[10px] text-slate-500 mt-1 pt-1 border-t border-white/5">Sürüm 1.5.0</p>
                  </div>
               </div>
 
@@ -207,27 +208,34 @@ const App: React.FC = () => {
               </div>
 
               {/* View Switcher */}
-              <div className="flex items-center bg-white/5 rounded-xl p-1 border border-white/5">
+              <div className="flex items-center bg-white/5 rounded-xl p-1 border border-white/5 overflow-x-auto">
                   <button
                     onClick={() => setCurrentView('generator')}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all ${currentView === 'generator' ? 'bg-surface text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${currentView === 'generator' ? 'bg-surface text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
                   >
                     <ImageIcon className="w-4 h-4" />
                     <span className="hidden sm:inline">Oluşturucu</span>
                   </button>
                   <button
                     onClick={() => setCurrentView('critic')}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all ${currentView === 'critic' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20' : 'text-slate-400 hover:text-indigo-400'}`}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${currentView === 'critic' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20' : 'text-slate-400 hover:text-indigo-400'}`}
                   >
                     <RobotIcon className="w-4 h-4" />
                     <span className="hidden sm:inline">Yapay Zeka</span>
                   </button>
                   <button
                     onClick={() => setCurrentView('cover-art')}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all ${currentView === 'cover-art' ? 'bg-purple-600 text-white shadow-md shadow-purple-500/20' : 'text-slate-400 hover:text-purple-400'}`}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${currentView === 'cover-art' ? 'bg-purple-600 text-white shadow-md shadow-purple-500/20' : 'text-slate-400 hover:text-purple-400'}`}
                   >
                     <MusicIcon className="w-4 h-4" />
                     <span className="hidden sm:inline">Şarkı Kapağı</span>
+                  </button>
+                   <button
+                    onClick={() => setCurrentView('video-cover')}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${currentView === 'video-cover' ? 'bg-red-600 text-white shadow-md shadow-red-500/20' : 'text-slate-400 hover:text-red-400'}`}
+                  >
+                    <VideoIcon className="w-4 h-4" />
+                    <span className="hidden sm:inline">Video Kapağı</span>
                   </button>
               </div>
             </div>
@@ -235,7 +243,7 @@ const App: React.FC = () => {
             {/* Right Side Actions */}
             <div className="flex items-center gap-4">
                {/* Global Settings Trigger - Only show for generator and critic */}
-               {currentView !== 'cover-art' && (
+               {(currentView === 'generator' || currentView === 'critic') && (
                  <button 
                     onClick={() => setIsSettingsOpen(true)}
                     className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all relative group"
@@ -309,6 +317,10 @@ const App: React.FC = () => {
 
           {currentView === 'cover-art' && (
              <CoverArtGenerator user={user} />
+          )}
+
+          {currentView === 'video-cover' && (
+             <VideoCoverGenerator user={user} />
           )}
         </div>
       </main>

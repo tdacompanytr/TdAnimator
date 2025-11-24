@@ -587,3 +587,39 @@ export const InfoIcon: React.FC<IconProps> = (props) => (
     <path d="M12 8h.01" />
   </svg>
 );
+
+export const VideoIcon: React.FC<IconProps> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <path d="m22 8-6 4 6 4V8Z" />
+    <rect width="14" height="12" x="2" y="6" rx="2" ry="2" />
+  </svg>
+);
+
+export const FilmIcon: React.FC<IconProps> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <rect width="18" height="18" x="3" y="3" rx="2" />
+    <path d="M7 3v18" />
+    <path d="M3 7.5h4" />
+    <path d="M3 12h18" />
+    <path d="M3 16.5h4" />
+    <path d="M17 3v18" />
+    <path d="M17 7.5h4" />
+    <path d="M17 16.5h4" />
+  </svg>
+);
+
+export const YoutubeIcon: React.FC<IconProps> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <path d="M2.5 17a24.12 24.12 0 0 1 0-10 2 2 0 0 1 1.4-1.4 49.56 49.56 0 0 1 16.2 0A2 2 0 0 1 21.5 7a24.12 24.12 0 0 1 0 10 2 2 0 0 1-1.4 1.4 49.55 49.55 0 0 1-16.2 0A2 2 0 0 1 2.5 17" />
+    <path d="m10 15 5-3-5-3z" />
+  </svg>
+);
+
+export const ClapperboardIcon: React.FC<IconProps> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <path d="M20.2 6 3 11l-.9-2.4c-.5-1.1.2-2.4 1.3-2.9l13.2-4.8c1.1-.5 2.4.2 2.9 1.3l.7 3.8Z" />
+    <path d="M16 5l-4.5 7" />
+    <path d="M20.3 3.8 17 11" />
+    <path d="M4.3 10 20 16a2 2 0 0 1 1 3v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 1.3-1.8Z" />
+  </svg>
+);
